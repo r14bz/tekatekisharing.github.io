@@ -35,6 +35,20 @@ export default function App() {
     });
   }, []);
 
+// Realtime
+useEffect(() => {
+  const stop = startRealtime({
+    onPuzzleChange: () => {
+      // refetch list komunitas / force re-render
+      // contoh: setRefreshKey(k => k + 1) atau panggil CloudService.getCommunityPuzzles()
+    },
+    onLeaderboardChange: () => {
+      // refetch leaderboard puzzle yang sedang dibuka
+    },
+  });
+  return stop;
+}, []);
+
   // Sync theme to DOM and storage
   useEffect(() => {
     StorageService.setTheme(theme);
