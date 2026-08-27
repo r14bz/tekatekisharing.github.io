@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index.ts"
+    },
+    {
+      "source": "/((?!assets/|.*\\.(?:js|css|json|png|jpg|jpeg|gif|svg|ico|woff2?)).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "name": "Teka Teki Sharing",
+  "description": "Game teka-teki silang interaktif dengan reaksi emotikon lengkap, kolom komentar dan ulasan komunitas, generator TTS otomatis, dan sinkronisasi cloud.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
