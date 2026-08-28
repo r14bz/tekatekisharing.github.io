@@ -1086,16 +1086,30 @@ app.post("/api/leaderboard/:puzzleId", async (req, res) => {
     };
 
     const saved = upsertLocalLeaderboardEntry(puzzleId, newEntry);
-    const ok = await insertLeaderboardEntryToSupabase(puzzleId, saved);
-    if (!ok) {
-      console.warn("[leaderboard] Upsert Supabase gagal untuk", puzzleId, saved.id);
+    const persistResult = await insertLeaderboardEntryToSupabase(puzzleId, saved);
+    const ok = Boolean(persistResult && (persistResult as any).ok !== false && persistResult !== false);
+    // Support both old boolean and new {ok,error} return shapes
+    const persisted =
+      typeof persistResult === "object" && persistResult !== null
+        ? Boolean((persistResult as any).ok)
+        : Boolean(persistResult);
+    const persistError =
+      typeof persistResult === "object" && persistResult !== null
+        ? (persistResult as any).error
+        : undefined;
+
+    if (!persisted) {
+      console.warn("[leaderboard] Upsert Supabase gagal untuk", puzzleId, saved.id, persistError);
     }
 
     res.json({
       success: true,
-      message: "Skor berhasil disimpan di leaderboard cloud!",
+      message: persisted
+        ? "Skor berhasil disimpan di leaderboard cloud!"
+        : "Skor tersimpan di server, tetapi gagal ke Supabase: " + (persistError || "unknown"),
       data: saved,
-      persisted: ok,
+      persisted,
+      persistError: persistError || null,
     });
   } catch (error) {
     console.error("Leaderboard submit error:", error);
