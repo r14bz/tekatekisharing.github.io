@@ -442,12 +442,18 @@ export async function deletePuzzleFromSupabase(id: string): Promise<boolean> {
   if (!client || !id) return false;
 
   try {
-    await client.from("puzzles").delete().eq("id", id);
+    const { error } = await client.from("puzzles").delete().eq("id", id);
+    if (error) {
+      console.warn("[Supabase] Delete puzzle error:", error.message);
+      return false;
+    }
+    // Bersihkan skor terkait (abaikan error jika tabel/kolom beda)
     try {
       await client.from("leaderboard").delete().eq("puzzle_id", id);
     } catch {
-      // ignore if column differs
+      /* ignore */
     }
+    console.log("[Supabase] Puzzle deleted:", id);
     return true;
   } catch (err) {
     console.error("[Supabase] Delete puzzle exception:", err);

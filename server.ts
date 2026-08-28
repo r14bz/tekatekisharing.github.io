@@ -177,6 +177,20 @@ function writeJsonFile(filePath: string, data: any, immediate = false): void {
 
 // In-memory cache synced with disk with automatic backup restore
 let puzzlesCache: any[] = readJsonFile(PUZZLES_FILE, []);
+
+const DELETED_PUZZLES_FILE = path.join(DATA_DIR, "deleted_puzzles.json");
+let deletedPuzzleIds: Set<string> = new Set(
+  (readJsonFile(DELETED_PUZZLES_FILE, []) as string[]).filter(Boolean)
+);
+function markPuzzleDeleted(id: string) {
+  if (!id) return;
+  deletedPuzzleIds.add(String(id));
+  writeJsonFile(DELETED_PUZZLES_FILE, Array.from(deletedPuzzleIds));
+}
+function isPuzzleDeleted(id: string) {
+  return deletedPuzzleIds.has(String(id));
+}
+
 if (puzzlesCache.length === 0) {
   const backupPuzzles = readJsonFile(PUZZLES_BACKUP_FILE, []);
   if (backupPuzzles.length > 0) {
@@ -321,22 +335,17 @@ async function initSupabaseData() {
 
     console.log("[Supabase] Terhubung ke Supabase. Memulai sinkronisasi data...");
 
-    // 1. Sync Puzzles
+    // 1. Sync Puzzles — Supabase sumber kebenaran; jangan resurrect yang sudah dihapus
     const sbPuzzles = await fetchPuzzlesFromSupabase();
-    if (sbPuzzles && sbPuzzles.length > 0) {
-      const map = new Map<string, any>();
-      puzzlesCache.forEach((p) => map.set(p.id, p));
-      sbPuzzles.forEach((p) => map.set(p.id, normalizePuzzle(p)));
-      puzzlesCache = Array.from(map.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    if (sbPuzzles !== null) {
+      const fromSb = (sbPuzzles || [])
+        .filter((p: any) => p && p.id && !isPuzzleDeleted(p.id))
+        .map((p: any) => normalizePuzzle(p));
+      puzzlesCache = fromSb.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       writeJsonFile(PUZZLES_FILE, puzzlesCache);
       writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
-      console.log(`[Supabase] Berhasil memuat ${sbPuzzles.length} teka-teki dari Supabase.`);
-    } else if (puzzlesCache.length > 0) {
-      // Seed local puzzles to Supabase in background
-      console.log(`[Supabase] Mengunggah ${puzzlesCache.length} teka-teki lokal ke tabel Supabase...`);
-      for (const p of puzzlesCache) {
-        await upsertPuzzleToSupabase(p);
-      }
+      console.log(`[Supabase] Berhasil memuat ${fromSb.length} teka-teki dari Supabase.`);
+      // Jangan bulk-upload cache lokal ke SB (bisa menghidupkan TTS yang sudah dihapus)
     }
 
     // 2. Sync User Accounts
@@ -541,20 +550,25 @@ CREATE TABLE IF NOT EXISTS profiles (
 app.get("/api/puzzles", async (req, res) => {
   try {
     const sbPuzzles = await fetchPuzzlesFromSupabase();
-    if (sbPuzzles && sbPuzzles.length > 0) {
-      const map = new Map<string, any>();
-      puzzlesCache.forEach((p) => map.set(p.id, normalizePuzzle(p)));
-      sbPuzzles.forEach((p) => map.set(p.id, normalizePuzzle(p)));
-      puzzlesCache = Array.from(map.values()).sort(
-        (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
-      );
+    if (sbPuzzles !== null) {
+      // Supabase = sumber kebenaran (termasuk daftar kosong setelah hapus massal)
+      puzzlesCache = sbPuzzles
+        .filter((p: any) => p && p.id && !isPuzzleDeleted(p.id) && !p.isDeleted)
+        .map((p: any) => normalizePuzzle(p))
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       writeJsonFile(PUZZLES_FILE, puzzlesCache);
+      writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
+    } else {
+      puzzlesCache = puzzlesCache.filter((p) => p && p.id && !isPuzzleDeleted(p.id));
     }
   } catch (err) {
     console.warn("[API] /puzzles Supabase refresh note:", err);
+    puzzlesCache = puzzlesCache.filter((p) => p && p.id && !isPuzzleDeleted(p.id));
   }
 
-  const sorted = [...puzzlesCache].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const sorted = puzzlesCache
+    .filter((p) => !p.isDraft && !isPuzzleDeleted(p.id))
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   res.json({
     success: true,
     data: sorted,
@@ -565,11 +579,10 @@ app.get("/api/puzzles", async (req, res) => {
 app.get("/api/puzzles/:query", async (req, res) => {
   try {
     const sbPuzzles = await fetchPuzzlesFromSupabase();
-    if (sbPuzzles && sbPuzzles.length > 0) {
-      const map = new Map<string, any>();
-      puzzlesCache.forEach((p) => map.set(p.id, normalizePuzzle(p)));
-      sbPuzzles.forEach((p) => map.set(p.id, normalizePuzzle(p)));
-      puzzlesCache = Array.from(map.values());
+    if (sbPuzzles !== null) {
+      puzzlesCache = sbPuzzles
+        .filter((p: any) => p && p.id && !isPuzzleDeleted(p.id) && !p.isDeleted)
+        .map((p: any) => normalizePuzzle(p));
       writeJsonFile(PUZZLES_FILE, puzzlesCache);
     }
   } catch (err) {
@@ -579,8 +592,10 @@ app.get("/api/puzzles/:query", async (req, res) => {
   const query = req.params.query.trim().toLowerCase();
   const found = puzzlesCache.find(
     (p) =>
-      (p.id && p.id.toLowerCase() === query) ||
-      (p.customCode && p.customCode.toLowerCase() === query)
+      p &&
+      !isPuzzleDeleted(p.id) &&
+      ((p.id && p.id.toLowerCase() === query) ||
+        (p.customCode && p.customCode.toLowerCase() === query))
   );
 
   if (found) {
@@ -670,6 +685,8 @@ app.post("/api/puzzles/batch-sync", (req, res) => {
     let addedCount = 0;
     puzzles.forEach((p) => {
       if (p && p.id && p.title && !p.isDraft) {
+        // Jangan hidupkan lagi TTS yang sudah dihapus
+        if (isPuzzleDeleted(p.id)) return;
         const idx = puzzlesCache.findIndex((x) => x.id === p.id);
         const norm = normalizePuzzle(p);
         if (idx === -1) {
@@ -898,7 +915,7 @@ app.delete("/api/puzzles/:id/comments/:commentId", (req, res) => {
 });
 
 // DELETE a puzzle from cloud database
-app.delete("/api/puzzles/:id", (req, res) => {
+app.delete("/api/puzzles/:id", async (req, res) => {
   try {
     const id = req.params.id;
     const puzzle = puzzlesCache.find((p) => p.id === id);
@@ -920,16 +937,23 @@ app.delete("/api/puzzles/:id", (req, res) => {
 
     puzzlesCache = puzzlesCache.filter((p) => p.id !== id);
     writeJsonFile(PUZZLES_FILE, puzzlesCache);
+    markPuzzleDeleted(id);
 
-    deletePuzzleFromSupabase(id).catch(() => {});
+    const delOk = await deletePuzzleFromSupabase(id);
+    if (!delOk) {
+      console.warn("[delete] Supabase delete gagal untuk", id);
+    }
 
-    // Also clean up leaderboard for deleted puzzle
     if (leaderboardsCache[id]) {
       delete leaderboardsCache[id];
       writeJsonFile(LEADERBOARDS_FILE, leaderboardsCache);
     }
 
-    res.json({ success: true, message: "Teka-teki dan peringkat terkait berhasil dihapus dari cloud database." });
+    res.json({
+      success: true,
+      message: "Teka-teki dan peringkat terkait berhasil dihapus dari cloud database.",
+      deletedFromSupabase: delOk,
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: "Gagal menghapus teka-teki." });
   }
@@ -2013,7 +2037,7 @@ app.put("/api/admin/puzzles/:id", requireAdminAuth, (req, res) => {
 });
 
 // 12. Admin - Permanently Delete Puzzle
-app.delete("/api/admin/puzzles/:id", requireAdminAuth, (req, res) => {
+app.delete("/api/admin/puzzles/:id", requireAdminAuth, async (req, res) => {
   const pId = req.params.id;
   const idx = puzzlesCache.findIndex((p) => p.id === pId);
   if (idx === -1) {
@@ -2022,14 +2046,20 @@ app.delete("/api/admin/puzzles/:id", requireAdminAuth, (req, res) => {
 
   const deleted = puzzlesCache.splice(idx, 1)[0];
   delete leaderboardsCache[pId];
+  markPuzzleDeleted(pId);
 
   writeJsonFile(PUZZLES_FILE, puzzlesCache);
   writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
   writeJsonFile(LEADERBOARDS_FILE, leaderboardsCache);
 
-  deletePuzzleFromSupabase(pId).catch(() => {});
+  const delOk = await deletePuzzleFromSupabase(pId);
+  if (!delOk) console.warn("[admin-delete] Supabase delete gagal", pId);
 
-  res.json({ success: true, message: `Teka-teki "${deleted.title}" berhasil dihapus secara permanen.` });
+  res.json({
+    success: true,
+    message: `Teka-teki "${deleted.title}" berhasil dihapus secara permanen.`,
+    deletedFromSupabase: delOk,
+  });
 });
 
 // 13. Admin - List All Comments Across All Puzzles

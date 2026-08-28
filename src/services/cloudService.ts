@@ -58,26 +58,6 @@ export const CloudService = {
    */
   async getCommunityPuzzles(): Promise<CrosswordPuzzle[]> {
     const cacheKey = 'community-puzzles';
-    const cached = getCache<CrosswordPuzzle[]>(cacheKey);
-    if (cached) return cached;
-
-    const map = new Map<string, CrosswordPuzzle>();
-
-    // 1. Seed with existing community cache
-    StorageService.getCommunityPuzzlesCache().forEach((p) => {
-      if (p && !p.isDraft) map.set(p.id, p);
-    });
-
-    // 2. Seed with local published puzzles
-    const localMyPuzzles = StorageService.getMyPuzzles();
-    localMyPuzzles.forEach((p) => {
-      if (p && !p.isDraft) map.set(p.id, p);
-    });
-
-    // 3. Seed with saved/received puzzles
-    StorageService.getSavedPuzzles().forEach((p) => {
-      if (p && !p.isDraft) map.set(p.id, p);
-    });
 
     try {
       const res = await fetch(`${API_BASE}/puzzles`, {
@@ -88,42 +68,37 @@ export const CloudService = {
         if (contentType.includes('application/json')) {
           const json = await res.json();
           if (json.success && Array.isArray(json.data)) {
-            json.data.forEach((cp: CrosswordPuzzle) => {
-              if (cp && !cp.isDraft) {
-                map.set(cp.id, cp);
-              }
-            });
-
-            const missingOnCloud = localMyPuzzles.filter(
-              (lp) => !lp.isDraft && !json.data.some((cp: CrosswordPuzzle) => cp.id === lp.id)
-            );
-
-            if (missingOnCloud.length > 0) {
-              fetch(`${API_BASE}/puzzles/batch-sync`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ puzzles: missingOnCloud }),
-              }).catch((err) => console.warn('Background auto-reseed note:', err));
-            }
+            // Server = sumber kebenaran (sudah filter TTS yang dihapus)
+            const list = json.data.filter((cp: CrosswordPuzzle) => cp && !cp.isDraft);
+            StorageService.saveCommunityPuzzlesCache(list);
+            setCache(cacheKey, list, DEFAULT_TTL);
+            return list;
           }
         }
       }
     } catch (err) {
-      console.warn('Could not fetch from cloud database, using local cache:', err);
+      console.warn('Error fetching community puzzles from cloud:', err);
     }
 
-    const mergedList = Array.from(map.values()).sort(
+    // Fallback offline: cache lokal
+    const cached = getCache<CrosswordPuzzle[]>(cacheKey);
+    if (cached) return cached.filter((p) => p && !p.isDraft);
+
+    const map = new Map<string, CrosswordPuzzle>();
+    StorageService.getCommunityPuzzlesCache().forEach((p) => {
+      if (p && !p.isDraft) map.set(p.id, p);
+    });
+    StorageService.getMyPuzzles().forEach((p) => {
+      if (p && !p.isDraft) map.set(p.id, p);
+    });
+    StorageService.getSavedPuzzles().forEach((p) => {
+      if (p && !p.isDraft) map.set(p.id, p);
+    });
+    return Array.from(map.values()).sort(
       (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
     );
-
-    if (mergedList.length > 0) {
-      StorageService.saveCommunityPuzzlesCache(mergedList);
-    }
-    setCache(cacheKey, mergedList, DEFAULT_TTL);
-    return mergedList;
   },
 
-  /**
    * Publishes a crossword puzzle to the shared cloud database
    */
   async publishPuzzle(puzzle: CrosswordPuzzle): Promise<{ success: boolean; data?: CrosswordPuzzle; message?: string }> {
@@ -188,6 +163,13 @@ export const CloudService = {
    */
   async deletePuzzle(id: string): Promise<{ success: boolean; message?: string }> {
     invalidateCache('community-puzzles', `puzzle:${id}`, `comments:${id}`, `leaderboard:${id}`);
+    // Hapus lokal dulu agar batch-sync tidak menghidupkan lagi
+    try {
+      StorageService.deleteMyPuzzle(id);
+      try { StorageService.deleteSavedPuzzle(id); } catch {}
+    } catch {
+      /* ignore */
+    }
     try {
       const profile = StorageService.getUserProfile();
       const res = await fetch(`${API_BASE}/puzzles/${encodeURIComponent(id)}`, {
@@ -199,7 +181,7 @@ export const CloudService = {
         },
       });
       const json = await res.json();
-      return { success: json.success, message: json.message };
+      return { success: Boolean(json.success), message: json.message };
     } catch (err) {
       console.error('Error deleting puzzle from cloud:', err);
       return { success: false, message: 'Gagal menghubungi server cloud.' };
