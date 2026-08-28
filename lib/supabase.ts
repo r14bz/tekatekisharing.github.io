@@ -389,19 +389,15 @@ export async function upsertPuzzleToSupabase(puzzle: any): Promise<boolean> {
       is_featured: Boolean(puzzle.isFeatured),
       created_at: Number(puzzle.createdAt) || Date.now(),
       updated_at: Number(puzzle.updatedAt) || Date.now(),
-      data: puzzle, // full json backup column
     };
 
     const { error } = await client.from("puzzles").upsert(payload, { onConflict: "id" });
     if (error) {
-      // Fallback with minimal json data column
-      const { error: fallbackErr } = await client.from("puzzles").upsert({
-        id: String(puzzle.id),
-        title: puzzle.title || "Teka Teki Silang",
-        data: puzzle,
-      }, { onConflict: "id" });
+      const minimal = { ...payload } as any;
+      delete minimal.is_featured;
+      const { error: fallbackErr } = await client.from("puzzles").upsert(minimal, { onConflict: "id" });
       if (fallbackErr) {
-        console.warn("[Supabase] Upsert puzzle fallback warning:", fallbackErr.message);
+        console.warn("[Supabase] Upsert puzzle error:", fallbackErr.message);
         return false;
       }
     }
@@ -497,22 +493,12 @@ export async function insertLeaderboardEntryToSupabase(puzzleId: string, entry: 
       score: Number(entry.score) || 1000,
       formatted_time: entry.formattedTime || null,
       completed_at: Number(entry.completedAt) || Date.now(),
-      data: entry,
     };
 
     const { error } = await client.from("leaderboard").upsert(payload, { onConflict: "id" });
     if (error) {
-      // If column mismatch error, fallback to minimal payload with JSON data
-      const { error: fallbackErr } = await client.from("leaderboard").upsert({
-        id: entryId,
-        puzzle_id: String(puzzleId),
-        data: entry,
-      }, { onConflict: "id" });
-
-      if (fallbackErr) {
-        console.warn("[Supabase] Insert leaderboard fallback note:", fallbackErr.message);
-        return false;
-      }
+      console.warn("[Supabase] Insert leaderboard error:", error.message);
+      return false;
     }
     return true;
   } catch (err) {
@@ -652,7 +638,6 @@ export async function upsertProfileToSupabase(profile: any): Promise<boolean> {
       total_solved: Number(profile.totalSolved) || 0,
       total_created: Number(profile.totalCreated) || 0,
       updated_at: Number(profile.updatedAt) || Date.now(),
-      data: profile,
     };
 
     await client.from("profiles").upsert(payload, { onConflict: "id" });
