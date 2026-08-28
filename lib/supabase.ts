@@ -370,12 +370,13 @@ export async function upsertPuzzleToSupabase(puzzle: any): Promise<boolean> {
   if (!client || !puzzle || !puzzle.id) return false;
 
   try {
+    // Payload lengkap sesuai schema ideal
     const payload: Record<string, any> = {
       id: String(puzzle.id),
       title: puzzle.title || "Teka Teki Silang",
       author_name: puzzle.authorName || "Pemain TTS",
       author_id: puzzle.authorId || null,
-      author_avatar: puzzle.authorAvatar || "??",
+      author_avatar: puzzle.authorAvatar || "🦊",
       author_email: puzzle.authorEmail || null,
       custom_code: puzzle.customCode || null,
       width: Number(puzzle.width) || 10,
@@ -391,17 +392,45 @@ export async function upsertPuzzleToSupabase(puzzle: any): Promise<boolean> {
       updated_at: Number(puzzle.updatedAt) || Date.now(),
     };
 
-    const { error } = await client.from("puzzles").upsert(payload, { onConflict: "id" });
-    if (error) {
-      const minimal = { ...payload } as any;
-      delete minimal.is_featured;
-      const { error: fallbackErr } = await client.from("puzzles").upsert(minimal, { onConflict: "id" });
-      if (fallbackErr) {
-        console.warn("[Supabase] Upsert puzzle error:", fallbackErr.message);
+    // Coba upsert; jika kolom tidak ada di schema, buang kolom itu dan coba lagi
+    let attempt = { ...payload };
+    for (let i = 0; i < 12; i++) {
+      const { error } = await client.from("puzzles").upsert(attempt, { onConflict: "id" });
+      if (!error) return true;
+
+      const msg = error.message || "";
+      // Contoh: Could not find the 'author_email' column of 'puzzles' in the schema cache
+      const m = msg.match(/Could not find the '([^']+)' column/i);
+      if (m && m[1] && m[1] in attempt) {
+        console.warn(`[Supabase] Kolom puzzles.${m[1]} tidak ada — diabaikan, retry upsert`);
+        delete attempt[m[1]];
+        continue;
+      }
+
+      // Fallback terakhir: kolom inti saja (wajib agar reactions/comments tersimpan)
+      const core = {
+        id: attempt.id,
+        title: attempt.title,
+        author_name: attempt.author_name,
+        width: attempt.width,
+        height: attempt.height,
+        grid: attempt.grid,
+        clues: attempt.clues,
+        reactions: attempt.reactions,
+        user_reactions: attempt.user_reactions,
+        comments: attempt.comments,
+        is_draft: attempt.is_draft,
+        created_at: attempt.created_at,
+        updated_at: attempt.updated_at,
+      };
+      const { error: coreErr } = await client.from("puzzles").upsert(core, { onConflict: "id" });
+      if (coreErr) {
+        console.warn("[Supabase] Upsert puzzle error:", coreErr.message);
         return false;
       }
+      return true;
     }
-    return true;
+    return false;
   } catch (err) {
     console.error("[Supabase] Upsert puzzle exception:", err);
     return false;
