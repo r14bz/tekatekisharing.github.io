@@ -295,7 +295,11 @@ puzzlesCache = puzzlesCache.map(normalizePuzzle);
 writeJsonFile(PUZZLES_FILE, puzzlesCache);
 
 // Sync in-memory cache with Supabase if configured
+let initSupabasePromise: Promise<void> | null = null;
+
 async function initSupabaseData() {
+  if (initSupabasePromise) return initSupabasePromise;
+  initSupabasePromise = (async () => {
   try {
     const status = await checkSupabaseStatus();
     if (!status.configured) {
@@ -337,10 +341,29 @@ async function initSupabaseData() {
       }
     }
 
-    // 3. Sync Leaderboards
+    // 3. Sync Leaderboards (merge + dedupe per pemain)
     const sbLeaderboards = await fetchLeaderboardsFromSupabase();
     if (sbLeaderboards && Object.keys(sbLeaderboards).length > 0) {
-      leaderboardsCache = { ...leaderboardsCache, ...sbLeaderboards };
+      for (const [pId, entries] of Object.entries(sbLeaderboards)) {
+        if (!Array.isArray(entries)) continue;
+        if (typeof upsertLocalLeaderboardEntry === "function") {
+          for (const e of entries) {
+            try { upsertLocalLeaderboardEntry(pId, e); } catch { /* ignore */ }
+          }
+        } else {
+          if (!leaderboardsCache[pId]) leaderboardsCache[pId] = [];
+          const map = new Map<string, any>();
+          for (const e of [...leaderboardsCache[pId], ...entries]) {
+            if (!e) continue;
+            const k = e.playerId || e.playerEmail || e.playerName || e.id;
+            const prev = map.get(k);
+            if (!prev || (Number(e.timeMs) > 0 && Number(e.timeMs) < (Number(prev.timeMs) || Infinity))) {
+              map.set(k, e);
+            }
+          }
+          leaderboardsCache[pId] = Array.from(map.values());
+        }
+      }
       writeJsonFile(LEADERBOARDS_FILE, leaderboardsCache);
       console.log(`[Supabase] Berhasil memuat leaderboard dari Supabase.`);
     }
@@ -353,7 +376,11 @@ async function initSupabaseData() {
     }
   } catch (err) {
     console.warn("[Supabase] Catatan sinkronisasi awal:", err);
+  } finally {
+    initSupabasePromise = null;
   }
+  })();
+  return initSupabasePromise;
 }
 
 // --- CLOUD DATABASE API ROUTES ---
@@ -1764,8 +1791,9 @@ app.post("/api/admin/supabase-config", requireAdminAuth, async (req, res) => {
 });
 
 // 5. Admin - List All Users
-app.get("/api/admin/users", requireAdminAuth, (req, res) => {
+app.get("/api/admin/users", requireAdminAuth, async (req, res) => {
   try {
+    await initSupabaseData();
     const seenIds = new Set<string>();
     const users: any[] = [];
 
@@ -1905,11 +1933,16 @@ app.delete("/api/admin/users/:id", requireAdminAuth, (req, res) => {
 });
 
 // 9. Admin - List All Puzzles for Moderation
-app.get("/api/admin/puzzles", requireAdminAuth, (req, res) => {
-  res.json({
-    success: true,
-    data: puzzlesCache,
-  });
+app.get("/api/admin/puzzles", requireAdminAuth, async (req, res) => {
+  try {
+    await initSupabaseData();
+    res.json({
+      success: true,
+      data: puzzlesCache,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Gagal memuat daftar teka-teki." });
+  }
 });
 
 // 10. Admin - Toggle Feature Puzzle (Pilihan Editor)
@@ -1976,7 +2009,9 @@ app.delete("/api/admin/puzzles/:id", requireAdminAuth, (req, res) => {
 });
 
 // 13. Admin - List All Comments Across All Puzzles
-app.get("/api/admin/comments", requireAdminAuth, (req, res) => {
+app.get("/api/admin/comments", requireAdminAuth, async (req, res) => {
+  try {
+    await initSupabaseData();
   const allComments: any[] = [];
   puzzlesCache.forEach((p) => {
     if (Array.isArray(p.comments)) {
@@ -1992,6 +2027,9 @@ app.get("/api/admin/comments", requireAdminAuth, (req, res) => {
   });
   allComments.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   res.json({ success: true, data: allComments });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Gagal memuat komentar." });
+  }
 });
 
 // 14. Admin - Delete Any Comment
@@ -2007,7 +2045,9 @@ app.delete("/api/admin/comments/:puzzleId/:commentId", requireAdminAuth, (req, r
 });
 
 // 15. Admin - List All Leaderboard Entries
-app.get("/api/admin/leaderboards", requireAdminAuth, (req, res) => {
+app.get("/api/admin/leaderboards", requireAdminAuth, async (req, res) => {
+  try {
+    await initSupabaseData();
   const allEntries: any[] = [];
   Object.entries(leaderboardsCache).forEach(([puzzleId, entries]) => {
     const puzzle = puzzlesCache.find((p) => p.id === puzzleId);
@@ -2021,8 +2061,19 @@ app.get("/api/admin/leaderboards", requireAdminAuth, (req, res) => {
       });
     }
   });
-  allEntries.sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0));
+  allEntries.sort((a, b) => {
+    const ta = a.timeMs > 0 ? a.timeMs : Number.MAX_SAFE_INTEGER;
+    const tb = b.timeMs > 0 ? b.timeMs : Number.MAX_SAFE_INTEGER;
+    if (ta !== tb) return ta - tb;
+    const sa = Number(a.score) || 0;
+    const sb = Number(b.score) || 0;
+    if (sb !== sa) return sb - sa;
+    return (Number(b.completedAt) || 0) - (Number(a.completedAt) || 0);
+  });
   res.json({ success: true, data: allEntries });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Gagal memuat leaderboard." });
+  }
 });
 
 // 16. Admin - Delete Suspicious Leaderboard Entry
