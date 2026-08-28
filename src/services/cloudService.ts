@@ -287,12 +287,13 @@ export const CloudService = {
   /**
    * Submits a score / completion to the shared cloud leaderboard
    */
-  async submitScore(puzzleId: string, entry: Omit<LeaderboardEntry, 'id' | 'completedAt'>): Promise<LeaderboardEntry> {
+  async submitScore(puzzleId: string, entry: any): Promise<LeaderboardEntry> {
     invalidateCache(`leaderboard:${puzzleId}`, 'global-leaderboards');
     const fullEntry: LeaderboardEntry = {
       ...entry,
-      id: (entry as any).id || 'lead_' + Math.random().toString(36).substring(2, 9),
-      completedAt: Date.now(),
+      id: entry.id || 'lead_' + Math.random().toString(36).substring(2, 9),
+      puzzleId,
+      completedAt: entry.completedAt || Date.now(),
     };
     StorageService.addLeaderboardEntry(fullEntry);
 
@@ -300,13 +301,11 @@ export const CloudService = {
       const res = await fetch(`${API_BASE}/leaderboard/${encodeURIComponent(puzzleId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...entry,
-          puzzleId,
-        }),
+        body: JSON.stringify(fullEntry),
       });
       const json = await res.json();
       if (json.success && json.data) {
+        StorageService.addLeaderboardEntry(json.data);
         return json.data;
       }
     } catch (err) {

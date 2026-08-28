@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import { Trophy, Clock, Home, Award, RotateCcw, ListOrdered, CheckCircle2, Zap } from 'lucide-react';
 import { CrosswordPuzzle, LeaderboardEntry, UserProfile } from '../types/tts';
@@ -28,40 +28,70 @@ export const WinModal: React.FC<WinModalProps> = ({
   onHome,
 }) => {
   const [userRank, setUserRank] = useState<number | null>(null);
+  const submittedRef = React.useRef<string | null>(null);
 
   const totalCells = puzzle.grid.flat().filter((c) => c !== null && c !== '').length;
   const score = calculateScore(timeSpentMs, totalCells);
   const speedTier = getSpeedCategory(timeSpentMs);
 
   useEffect(() => {
-    if (isOpen) {
-      // Fire celebratory confetti
-      confetti({
-        particleCount: 100,
-        spread: 70,
-        origin: { y: 0.6 },
-      });
-
-      // Automatically submit score to leaderboard (Local & Cloud) without requiring username form
-      const entry: LeaderboardEntry = {
-        id: 'lb_' + Math.random().toString(36).substring(2, 9),
-        puzzleId: puzzle.id,
-        puzzleTitle: puzzle.title,
-        playerName: userProfile.name,
-        playerAvatar: userProfile.avatar,
-        timeMs: timeSpentMs,
-        score: score,
-        completedAt: Date.now(),
-      };
-
-      StorageService.addLeaderboardEntry(entry);
-      CloudService.submitScore(puzzle.id, entry);
-
-      const allLeaderboard = StorageService.getLeaderboard(puzzle.id);
-      const rank = allLeaderboard.findIndex((e) => e.timeMs === timeSpentMs) + 1;
-      setUserRank(rank > 0 ? rank : 1);
+    if (!isOpen) {
+      submittedRef.current = null;
+      return;
     }
-  }, [isOpen, puzzle.id, puzzle.title, timeSpentMs, score, userProfile.avatar, userProfile.name]);
+
+    // Fire celebratory confetti sekali per buka modal
+    confetti({
+      particleCount: 100,
+      spread: 70,
+      origin: { y: 0.6 },
+    });
+
+    // Hindari submit ganda (StrictMode / dependency re-run)
+    const submitKey = `${puzzle.id}:${timeSpentMs}:${userProfile.id || userProfile.name}`;
+    if (submittedRef.current === submitKey) return;
+    submittedRef.current = submitKey;
+
+    if (!timeSpentMs || timeSpentMs <= 0) return;
+
+    const entry: LeaderboardEntry = {
+      id: 'lb_' + (userProfile.id || 'anon') + '_' + puzzle.id + '_' + Math.floor(timeSpentMs / 1000),
+      puzzleId: puzzle.id,
+      puzzleTitle: puzzle.title,
+      playerName: userProfile.name || 'Pemain TTS',
+      playerAvatar: userProfile.avatar || '🦊',
+      playerId: userProfile.id,
+      playerEmail: userProfile.email,
+      timeMs: timeSpentMs,
+      score: score,
+      completedAt: Date.now(),
+    };
+
+    StorageService.addLeaderboardEntry(entry);
+    CloudService.submitScore(puzzle.id, entry).then(() => {
+      // Refresh rank dari cloud jika memungkinkan
+      CloudService.getLeaderboard(puzzle.id).then((list) => {
+        if (Array.isArray(list) && list.length) {
+          const sorted = [...list].sort((a, b) => {
+            const ta = a.timeMs || Infinity;
+            const tb = b.timeMs || Infinity;
+            if (ta !== tb) return ta - tb;
+            return (b.score || 0) - (a.score || 0);
+          });
+          const idx = sorted.findIndex(
+            (e) =>
+              (userProfile.id && e.playerId === userProfile.id) ||
+              e.timeMs === timeSpentMs
+          );
+          setUserRank(idx >= 0 ? idx + 1 : 1);
+        }
+      }).catch(() => {});
+    });
+
+    const allLeaderboard = StorageService.getLeaderboard(puzzle.id);
+    const rank = allLeaderboard.findIndex((e) => e.timeMs === timeSpentMs) + 1;
+    setUserRank(rank > 0 ? rank : 1);
+  }, [isOpen, puzzle.id, puzzle.title, timeSpentMs, score, userProfile]);
 
   if (!isOpen) return null;
 

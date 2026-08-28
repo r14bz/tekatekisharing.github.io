@@ -86,6 +86,8 @@ export interface LeaderboardEntry {
   puzzleTitle: string;
   playerName: string;
   playerAvatar: string;
+  playerId?: string;
+  playerEmail?: string;
   timeMs: number;
   score?: number; // Calculated score based on completion time & puzzle size
   completedAt: number;

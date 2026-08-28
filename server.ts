@@ -896,53 +896,127 @@ app.delete("/api/puzzles/:id", (req, res) => {
   }
 });
 
-// GET all leaderboard entries (Global, filtered to active existing puzzles only)
-app.get("/api/leaderboards", (req, res) => {
-  try {
-    const activePuzzleIds = new Set(puzzlesCache.map((p) => p.id));
-    const allEntries: any[] = [];
 
+/** Sort leaderboard: waktu tercepat dulu (timeMs > 0), lalu skor tertinggi, lalu terbaru */
+function sortLeaderboardEntries(list: any[]): any[] {
+  return [...(list || [])]
+    .filter((e) => e && (Number(e.timeMs) > 0 || Number(e.score) > 0))
+    .sort((a, b) => {
+      const ta = Number(a.timeMs) || Number.MAX_SAFE_INTEGER;
+      const tb = Number(b.timeMs) || Number.MAX_SAFE_INTEGER;
+      if (ta !== tb) return ta - tb;
+      const sa = Number(a.score) || 0;
+      const sb = Number(b.score) || 0;
+      if (sb !== sa) return sb - sa;
+      return (Number(b.completedAt) || 0) - (Number(a.completedAt) || 0);
+    });
+}
+
+/** Kunci unik pemain untuk dedupe (1 skor terbaik per pemain per puzzle) */
+function leaderboardPlayerKey(e: any): string {
+  if (e.playerId) return "id:" + String(e.playerId).toLowerCase();
+  if (e.playerEmail) return "email:" + String(e.playerEmail).toLowerCase().trim();
+  return "name:" + String(e.playerName || "anon").toLowerCase().trim();
+}
+
+/**
+ * Upsert entri leaderboard: simpan hanya rekor terbaik per pemain.
+ * Lebih baik = timeMs lebih kecil; jika sama, score lebih tinggi.
+ */
+function upsertLocalLeaderboardEntry(puzzleId: string, entry: any): any {
+  if (!leaderboardsCache[puzzleId]) leaderboardsCache[puzzleId] = [];
+  const list = leaderboardsCache[puzzleId];
+  const key = leaderboardPlayerKey(entry);
+  const idx = list.findIndex((x) => leaderboardPlayerKey(x) === key);
+
+  let finalEntry = { ...entry };
+  if (idx >= 0) {
+    const prev = list[idx];
+    const prevT = Number(prev.timeMs) || Number.MAX_SAFE_INTEGER;
+    const newT = Number(entry.timeMs) || Number.MAX_SAFE_INTEGER;
+    const prevS = Number(prev.score) || 0;
+    const newS = Number(entry.score) || 0;
+    // Pertahankan yang lebih baik
+    if (newT < prevT || (newT === prevT && newS > prevS)) {
+      finalEntry = {
+        ...prev,
+        ...entry,
+        id: prev.id || entry.id, // keep stable id for supabase upsert
+        completedAt: entry.completedAt || Date.now(),
+      };
+      list[idx] = finalEntry;
+    } else {
+      finalEntry = prev; // tidak mengganti rekor lama
+    }
+  } else {
+    list.push(finalEntry);
+  }
+
+  leaderboardsCache[puzzleId] = sortLeaderboardEntries(list).slice(0, 100);
+  writeJsonFile(LEADERBOARDS_FILE, leaderboardsCache);
+  return finalEntry;
+}
+
+async function ensureLeaderboardsFromSupabase() {
+  try {
+    const sb = await fetchLeaderboardsFromSupabase();
+    if (!sb || Object.keys(sb).length === 0) return;
+    for (const [pId, entries] of Object.entries(sb)) {
+      if (!Array.isArray(entries)) continue;
+      if (!leaderboardsCache[pId]) leaderboardsCache[pId] = [];
+      for (const e of entries) {
+        upsertLocalLeaderboardEntry(pId, e);
+      }
+    }
+  } catch (err) {
+    console.warn("[leaderboard] Supabase merge note:", err);
+  }
+}
+
+
+// GET all leaderboard entries (Global, filtered to active existing puzzles only)
+app.get("/api/leaderboards", async (req, res) => {
+  try {
+    await ensureLeaderboardsFromSupabase();
+    const activePuzzleIds = new Set(puzzlesCache.map((p) => p.id));
+    // Jika puzzlesCache kosong di instance ini, coba isi dari Supabase
+    if (activePuzzleIds.size === 0) {
+      try {
+        const sbPuzzles = await fetchPuzzlesFromSupabase();
+        if (sbPuzzles?.length) {
+          sbPuzzles.forEach((p: any) => activePuzzleIds.add(p.id));
+        }
+      } catch { /* ignore */ }
+    }
+
+    const allEntries: any[] = [];
     Object.entries(leaderboardsCache).forEach(([puzzleId, entries]) => {
-      // Only include entries for puzzles that currently exist
-      if (activePuzzleIds.has(puzzleId) && Array.isArray(entries)) {
+      if ((!activePuzzleIds.size || activePuzzleIds.has(puzzleId)) && Array.isArray(entries)) {
         allEntries.push(...entries);
       }
     });
 
-    // Strict sort by fastest duration timeMs ascending, then highest score descending
-    allEntries.sort((a, b) => {
-      const timeDiff = (a.timeMs || 0) - (b.timeMs || 0);
-      if (timeDiff !== 0) return timeDiff;
-      const scoreDiff = (b.score || 0) - (a.score || 0);
-      if (scoreDiff !== 0) return scoreDiff;
-      return (b.completedAt || 0) - (a.completedAt || 0);
-    });
-
-    res.json({ success: true, data: allEntries.slice(0, 100) });
+    const sorted = sortLeaderboardEntries(allEntries);
+    res.json({ success: true, data: sorted.slice(0, 100) });
   } catch (error) {
     res.status(500).json({ success: false, message: "Gagal mengambil data peringkat global." });
   }
 });
 
 // GET leaderboard entries for a specific puzzle
-app.get("/api/leaderboard/:puzzleId", (req, res) => {
-  const puzzleId = req.params.puzzleId;
-  const list = leaderboardsCache[puzzleId] || [];
-
-  // Sort by lowest timeMs (fastest speed) first, then highest score, then newest completedAt
-  const sorted = [...list].sort((a, b) => {
-    const timeDiff = (a.timeMs || 0) - (b.timeMs || 0);
-    if (timeDiff !== 0) return timeDiff;
-    const scoreDiff = (b.score || 0) - (a.score || 0);
-    if (scoreDiff !== 0) return scoreDiff;
-    return (b.completedAt || 0) - (a.completedAt || 0);
-  });
-
-  res.json({ success: true, data: sorted });
+app.get("/api/leaderboard/:puzzleId", async (req, res) => {
+  try {
+    const puzzleId = req.params.puzzleId;
+    await ensureLeaderboardsFromSupabase();
+    const sorted = sortLeaderboardEntries(leaderboardsCache[puzzleId] || []);
+    res.json({ success: true, data: sorted });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Gagal mengambil leaderboard." });
+  }
 });
 
 // POST submit a leaderboard entry (global across all users)
-app.post("/api/leaderboard/:puzzleId", (req, res) => {
+app.post("/api/leaderboard/:puzzleId", async (req, res) => {
   try {
     const puzzleId = req.params.puzzleId;
     const entry = req.body;
@@ -951,35 +1025,41 @@ app.post("/api/leaderboard/:puzzleId", (req, res) => {
       return res.status(400).json({ success: false, message: "Data skor tidak valid." });
     }
 
-    if (!leaderboardsCache[puzzleId]) {
-      leaderboardsCache[puzzleId] = [];
+    const timeMs = Number(entry.timeMs) || 0;
+    if (timeMs <= 0) {
+      return res.status(400).json({ success: false, message: "Waktu pengerjaan tidak valid." });
     }
 
+    await ensureLeaderboardsFromSupabase();
+
     const newEntry = {
-      ...entry,
-      id: entry.id || 'lead_' + Math.random().toString(36).substring(2, 9),
-      completedAt: entry.completedAt || Date.now(),
-      score: entry.score || 1000,
+      id: entry.id || "lead_" + Math.random().toString(36).substring(2, 11),
+      puzzleId,
+      playerName: String(entry.playerName).trim() || "Pemain TTS",
+      playerAvatar: entry.playerAvatar || "🦊",
+      playerId: entry.playerId || entry.userId || null,
+      playerEmail: entry.playerEmail || entry.email || null,
+      timeMs,
+      score: Number(entry.score) || 1000,
+      formattedTime: entry.formattedTime || null,
+      completedAt: Number(entry.completedAt) || Date.now(),
+      puzzleTitle: entry.puzzleTitle || null,
     };
 
-    leaderboardsCache[puzzleId].push(newEntry);
+    const saved = upsertLocalLeaderboardEntry(puzzleId, newEntry);
+    const ok = await insertLeaderboardEntryToSupabase(puzzleId, saved);
+    if (!ok) {
+      console.warn("[leaderboard] Upsert Supabase gagal untuk", puzzleId, saved.id);
+    }
 
-    // Keep sorted by fastest time first and limit to top 100
-    leaderboardsCache[puzzleId].sort((a, b) => {
-      const timeDiff = (a.timeMs || 0) - (b.timeMs || 0);
-      if (timeDiff !== 0) return timeDiff;
-      const scoreDiff = (b.score || 0) - (a.score || 0);
-      if (scoreDiff !== 0) return scoreDiff;
-      return (b.completedAt || 0) - (a.completedAt || 0);
+    res.json({
+      success: true,
+      message: "Skor berhasil disimpan di leaderboard cloud!",
+      data: saved,
+      persisted: ok,
     });
-    leaderboardsCache[puzzleId] = leaderboardsCache[puzzleId].slice(0, 100);
-
-    writeJsonFile(LEADERBOARDS_FILE, leaderboardsCache);
-
-    insertLeaderboardEntryToSupabase(puzzleId, newEntry).catch(() => {});
-
-    res.json({ success: true, message: "Skor berhasil disimpan di leaderboard cloud!", data: newEntry });
   } catch (error) {
+    console.error("Leaderboard submit error:", error);
     res.status(500).json({ success: false, message: "Gagal menyimpan skor." });
   }
 });

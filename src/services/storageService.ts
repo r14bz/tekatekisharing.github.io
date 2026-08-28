@@ -521,24 +521,49 @@ export const StorageService = {
       const map: Record<string, LeaderboardEntry[]> = data ? JSON.parse(data) : {};
       const list = map[entry.puzzleId] || [];
 
-      // Ensure score is populated
       const entryWithScore: LeaderboardEntry = {
         ...entry,
         score: entry.score || calculateScore(entry.timeMs, 25),
       };
 
-      list.push(entryWithScore);
-      // Sort by fastest time ascending (then score descending)
-      list.sort((a, b) => a.timeMs - b.timeMs || (b.score || 0) - (a.score || 0));
+      const playerKey = (e: LeaderboardEntry) =>
+        (e.playerId && `id:${e.playerId}`) ||
+        ((e as any).playerEmail && `email:${String((e as any).playerEmail).toLowerCase()}`) ||
+        `name:${(e.playerName || '').toLowerCase()}`;
 
-      // Keep top 50
+      const key = playerKey(entryWithScore);
+      const idx = list.findIndex((x) => playerKey(x) === key);
+      let isNewRecord = false;
+      if (idx >= 0) {
+        const prev = list[idx];
+        if (
+          entryWithScore.timeMs < prev.timeMs ||
+          (entryWithScore.timeMs === prev.timeMs && (entryWithScore.score || 0) > (prev.score || 0))
+        ) {
+          list[idx] = { ...prev, ...entryWithScore, id: prev.id };
+          isNewRecord = true;
+        }
+      } else {
+        list.push(entryWithScore);
+        isNewRecord = true;
+      }
+
+      list.sort((a, b) => {
+        const ta = a.timeMs > 0 ? a.timeMs : Number.MAX_SAFE_INTEGER;
+        const tb = b.timeMs > 0 ? b.timeMs : Number.MAX_SAFE_INTEGER;
+        if (ta !== tb) return ta - tb;
+        return (b.score || 0) - (a.score || 0);
+      });
+
       map[entry.puzzleId] = list.slice(0, 50);
       localStorage.setItem(LEADERBOARDS_KEY, JSON.stringify(map));
 
-      // Update user profile stats
-      const profile = this.getUserProfile();
-      profile.totalSolved = (profile.totalSolved || 0) + 1;
-      this.saveUserProfile(profile);
+      // totalSolved hanya naik jika skor baru (bukan duplikat submit)
+      if (isNewRecord && idx < 0) {
+        const profile = this.getUserProfile();
+        profile.totalSolved = (profile.totalSolved || 0) + 1;
+        this.saveUserProfile(profile);
+      }
     } catch (e) {
       console.error('Failed to add leaderboard entry:', e);
     }

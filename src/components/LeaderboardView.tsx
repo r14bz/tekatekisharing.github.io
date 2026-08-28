@@ -48,8 +48,9 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
         }));
         // Sort strictly by fastest completion time (timeMs ascending), then score descending
         formatted.sort((a, b) => {
-          const timeDiff = (a.timeMs || 0) - (b.timeMs || 0);
-          if (timeDiff !== 0) return timeDiff;
+          const ta = a.timeMs > 0 ? a.timeMs : Number.MAX_SAFE_INTEGER;
+          const tb = b.timeMs > 0 ? b.timeMs : Number.MAX_SAFE_INTEGER;
+          if (ta !== tb) return ta - tb;
           return (b.score || 0) - (a.score || 0);
         });
         if (isMounted) {
@@ -71,8 +72,9 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
         }));
         // Sort strictly by fastest completion time (timeMs ascending), then score descending
         formatted.sort((a, b) => {
-          const timeDiff = (a.timeMs || 0) - (b.timeMs || 0);
-          if (timeDiff !== 0) return timeDiff;
+          const ta = a.timeMs > 0 ? a.timeMs : Number.MAX_SAFE_INTEGER;
+          const tb = b.timeMs > 0 ? b.timeMs : Number.MAX_SAFE_INTEGER;
+          if (ta !== tb) return ta - tb;
           return (b.score || 0) - (a.score || 0);
         });
         if (isMounted) {
