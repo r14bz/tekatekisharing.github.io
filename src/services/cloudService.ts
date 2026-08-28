@@ -10,7 +10,7 @@ type CacheEntry<T> = { data: T; expires: number };
 
 const memoryCache = new Map<string, CacheEntry<any>>();
 
-const DEFAULT_TTL = 30_000;       // 30 detik – list community
+const DEFAULT_TTL = 30_000;       // 30 detik ï¿½ list community
 const LEADERBOARD_TTL = 20_000;   // 20 detik
 const COMMENTS_TTL = 15_000;      // 15 detik
 const PUZZLE_DETAIL_TTL = 25_000; // 25 detik
@@ -145,7 +145,7 @@ export const CloudService = {
       });
       const json = await res.json();
       if (json.success && json.data) {
-        invalidateCache('community-puzzles', 'puzzle:');
+        invalidateCache('community-puzzles', `puzzle:${json.data.id}`);
         StorageService.saveMyPuzzle(json.data);
         return { success: true, data: json.data, message: json.message };
       }
@@ -167,7 +167,7 @@ export const CloudService = {
 
     try {
       const clean = codeOrId.trim();
-      const res = await fetch(`\( {API_BASE}/puzzles/ \){encodeURIComponent(clean)}`);
+      const res = await fetch(`${API_BASE}/puzzles/${encodeURIComponent(clean)}`);
       if (res.ok) {
         const json = await res.json();
         if (json.success && json.data) {
@@ -187,10 +187,10 @@ export const CloudService = {
    * Deletes a puzzle from cloud database
    */
   async deletePuzzle(id: string): Promise<{ success: boolean; message?: string }> {
-    invalidateCache('community-puzzles', `puzzle:\( {id}`, `comments: \){id}`, `leaderboard:${id}`);
+    invalidateCache('community-puzzles', `puzzle:${id}`, `comments:${id}`, `leaderboard:${id}`);
     try {
       const profile = StorageService.getUserProfile();
-      const res = await fetch(`\( {API_BASE}/puzzles/ \){encodeURIComponent(id)}`, {
+      const res = await fetch(`${API_BASE}/puzzles/${encodeURIComponent(id)}`, {
         method: 'DELETE',
         headers: {
           'x-author-id': profile.id || '',
@@ -215,7 +215,7 @@ export const CloudService = {
     if (cached) return cached;
 
     try {
-      const res = await fetch(`\( {API_BASE}/leaderboard/ \){encodeURIComponent(puzzleId)}`);
+      const res = await fetch(`${API_BASE}/leaderboard/${encodeURIComponent(puzzleId)}`);
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
@@ -297,7 +297,7 @@ export const CloudService = {
     StorageService.addLeaderboardEntry(fullEntry);
 
     try {
-      const res = await fetch(`\( {API_BASE}/leaderboard/ \){encodeURIComponent(puzzleId)}`, {
+      const res = await fetch(`${API_BASE}/leaderboard/${encodeURIComponent(puzzleId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -358,7 +358,7 @@ export const CloudService = {
         headers['x-author-id'] = profile.id;
       }
 
-      const res = await fetch(`\( {API_BASE}/puzzles/ \){encodeURIComponent(puzzleId)}/react`, {
+      const res = await fetch(`${API_BASE}/puzzles/${encodeURIComponent(puzzleId)}/react`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -390,7 +390,7 @@ export const CloudService = {
     if (cached) return cached;
 
     try {
-      const res = await fetch(`\( {API_BASE}/puzzles/ \){encodeURIComponent(puzzleId)}/comments`);
+      const res = await fetch(`${API_BASE}/puzzles/${encodeURIComponent(puzzleId)}/comments`);
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
@@ -414,7 +414,7 @@ export const CloudService = {
     comment: { authorName?: string; authorAvatar?: string; authorId?: string; authorEmail?: string; content: string },
     profile?: any
   ): Promise<PuzzleComment | null> {
-    invalidateCache(`comments:\( {puzzleId}`, 'community-puzzles', `puzzle: \){puzzleId}`);
+    invalidateCache(`comments:${puzzleId}`, 'community-puzzles', `puzzle:${puzzleId}`);
     const localComment: PuzzleComment = {
       id: 'c_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7),
       puzzleId,
@@ -436,7 +436,7 @@ export const CloudService = {
         headers['x-author-id'] = profile?.id || comment.authorId || '';
       }
 
-      const res = await fetch(`\( {API_BASE}/puzzles/ \){encodeURIComponent(puzzleId)}/comments`, {
+      const res = await fetch(`${API_BASE}/puzzles/${encodeURIComponent(puzzleId)}/comments`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -462,10 +462,10 @@ export const CloudService = {
    * Deletes a comment from a crossword puzzle
    */
   async deletePuzzleComment(puzzleId: string, commentId: string): Promise<boolean> {
-    invalidateCache(`comments:\( {puzzleId}`, 'community-puzzles', `puzzle: \){puzzleId}`);
+    invalidateCache(`comments:${puzzleId}`, 'community-puzzles', `puzzle:${puzzleId}`);
     StorageService.deletePuzzleComment(puzzleId, commentId);
     try {
-      const res = await fetch(`\( {API_BASE}/puzzles/ \){encodeURIComponent(puzzleId)}/comments/${encodeURIComponent(commentId)}`, {
+      const res = await fetch(`${API_BASE}/puzzles/${encodeURIComponent(puzzleId)}/comments/${encodeURIComponent(commentId)}`, {
         method: 'DELETE',
       });
       if (res.ok) {
