@@ -35,19 +35,6 @@ export default function App() {
     });
   }, []);
 
-// Realtime
-useEffect(() => {
-  const stop = startRealtime({
-    onPuzzleChange: () => {
-      // refetch list komunitas / force re-render
-      // contoh: setRefreshKey(k => k + 1) atau panggil CloudService.getCommunityPuzzles()
-    },
-    onLeaderboardChange: () => {
-      // refetch leaderboard puzzle yang sedang dibuka
-    },
-  });
-  return stop;
-}, []);
 
   // Sync theme to DOM and storage
   useEffect(() => {
@@ -132,7 +119,7 @@ useEffect(() => {
   };
 
   return (
-    <div className="min-h-screen bg-[#F3F4F6] dark:bg-[#0f172a] text-[#1F2937] dark:text-slate-100 flex flex-col font-sans transition-colors duration-200">
+    <div className="min-h-screen pb-[env(safe-area-inset-bottom)] bg-[#F3F4F6] dark:bg-[#0f172a] text-[#1F2937] dark:text-slate-100 flex flex-col font-sans transition-colors duration-200">
       {/* Top Navigation */}
       <Navbar
         activeTab={activeTab}

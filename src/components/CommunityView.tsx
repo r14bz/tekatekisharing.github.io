@@ -643,40 +643,88 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
             </div>
           </div>
         </div>
+      ) : isCloudLoading && filteredList.length === 0 ? (
+        /* Skeleton loading cards */
+        <div
+          id="community-skeleton-grid"
+          className="w-full max-w-full min-w-0 grid grid-cols-1 md:grid-cols-2 gap-4"
+          aria-busy="true"
+          aria-label="Memuat teka-teki"
+        >
+          {[0, 1, 2, 3].map((i) => (
+            <div
+              key={i}
+              className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 shadow-2xs overflow-hidden"
+            >
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <div className="flex-1 space-y-2">
+                  <div className="h-5 w-3/4 max-w-[200px] rounded-lg bg-slate-200 dark:bg-slate-700 animate-pulse" />
+                  <div className="h-3 w-1/2 max-w-[140px] rounded-md bg-slate-100 dark:bg-slate-800 animate-pulse" />
+                </div>
+                <div className="h-8 w-16 rounded-full bg-slate-100 dark:bg-slate-800 animate-pulse shrink-0" />
+              </div>
+              <div className="h-3 w-full rounded-md bg-slate-100 dark:bg-slate-800 animate-pulse mb-2" />
+              <div className="h-3 w-5/6 rounded-md bg-slate-100 dark:bg-slate-800 animate-pulse mb-4" />
+              <div className="flex items-center gap-2 mt-2">
+                <div className="h-9 flex-1 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse" />
+                <div className="h-9 w-9 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse" />
+                <div className="h-9 w-9 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse" />
+              </div>
+            </div>
+          ))}
+        </div>
       ) : filteredList.length === 0 ? (
-        /* Empty State */
+        /* Empty State — lebih ramah & jelas */
         <div
           id="community-empty-state"
-          className="text-center py-14 px-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xs"
+          className="text-center py-14 px-5 bg-gradient-to-b from-white to-slate-50 dark:from-slate-900 dark:to-slate-950 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xs"
         >
-          <Layers className="w-12 h-12 text-slate-400 mx-auto mb-3" />
-          <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-1">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-3xl bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-100 dark:border-indigo-900 flex items-center justify-center">
+            <Layers className="w-8 h-8 text-indigo-400 dark:text-indigo-300" />
+          </div>
+          <h3 className="text-lg font-black text-slate-800 dark:text-white mb-1.5 tracking-tight">
             {activeTab === 'community'
-              ? 'Tidak ada teka-teki yang cocok dengan pencarian'
+              ? searchQuery.trim()
+                ? 'Tidak ada teka-teki yang cocok'
+                : 'Komunitas masih sepi'
               : activeTab === 'my'
-              ? 'Belum Ada Teka-Teki Silang yang Dipublish'
+              ? 'Belum ada TTS yang dipublish'
               : activeTab === 'drafts'
-              ? 'Belum Ada Draf Teka-Teki Tersimpan'
-              : 'Belum Ada TTS Tersimpan'}
+              ? 'Belum ada draf tersimpan'
+              : 'Belum ada TTS'}
           </h3>
-          <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto mb-5 leading-relaxed">
+          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 max-w-sm mx-auto mb-6 leading-relaxed">
             {activeTab === 'drafts'
-              ? 'Saat Anda membuat teka-teki di menu Buat TTS, klik "Simpan Draf" untuk melanjutkan rancangan Anda nanti.'
+              ? 'Saat membuat teka-teki, klik "Simpan Draf" untuk melanjutkan rancangan nanti.'
               : activeTab === 'my'
-              ? 'Rancang teka-teki silang kreasi Anda sendiri dan publikasikan agar bisa dimainkan teman!'
-              : 'Jelajahi teka-teki komunitas atau masukkan kode teka-teki teman Anda pada kolom di atas.'}
+              ? 'Rancang TTS kreasi Anda, lalu publikasikan agar bisa dimainkan teman!'
+              : searchQuery.trim()
+              ? 'Coba kata kunci lain, atau kosongkan pencarian untuk melihat semua TTS komunitas.'
+              : 'Jadilah yang pertama membagikan teka-teki silang, atau masukkan kode TTS teman di kolom atas.'}
           </p>
-          {(activeTab === 'my' || activeTab === 'drafts') && (
-            <button
-              type="button"
-              id="btn-empty-create-first"
-              onClick={onCreateNew}
-              className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl inline-flex items-center gap-2 shadow-xs transition-all cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              Mulai Buat TTS
-            </button>
-          )}
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {(activeTab === 'my' || activeTab === 'drafts' || (activeTab === 'community' && !searchQuery.trim())) && (
+              <button
+                type="button"
+                id="btn-empty-create-first"
+                onClick={onCreateNew}
+                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl inline-flex items-center gap-2 shadow-md shadow-indigo-500/20 transition-all cursor-pointer active:scale-95"
+              >
+                <Plus className="w-4 h-4" />
+                Buat TTS Pertama
+              </button>
+            )}
+            {activeTab === 'community' && searchQuery.trim() && (
+              <button
+                type="button"
+                id="btn-empty-clear-search"
+                onClick={() => setSearchQuery('')}
+                className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition-all cursor-pointer"
+              >
+                Hapus Pencarian
+              </button>
+            )}
+          </div>
         </div>
       ) : (
         /* 🎴 COLORFUL & ELEGANT PUZZLE CARDS GRID */

@@ -6,8 +6,7 @@ interface FooterStatsProps {
 }
 
 interface PresenceStats {
-  
-Visits: number;
+  totalVisits: number;
   online: number;
 }
 
@@ -96,7 +95,7 @@ export const FooterStats: React.FC<FooterStatsProps> = ({ onOpenAdmin }) => {
   }, []);
 
   return (
-    <footer className="w-full bg-white/80 dark:bg-slate-900/80 backdrop-blur-md text-slate-600 dark:text-slate-400 py-4 border-t border-slate-200 dark:border-slate-800/80 mt-16 transition-colors duration-200 text-xs">
+    <footer className="w-full bg-white/80 dark:bg-slate-900/80 backdrop-blur-md text-slate-600 dark:text-slate-400 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] border-t border-slate-200 dark:border-slate-800/80 mt-16 transition-colors duration-200 text-xs">
       <div className="max-w-6xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
         {/* Info Singkat Brand */}
         <div className="flex items-center gap-2 font-medium text-slate-700 dark:text-slate-300">
@@ -126,7 +125,7 @@ export const FooterStats: React.FC<FooterStatsProps> = ({ onOpenAdmin }) => {
               <strong className="text-slate-900 dark:text-slate-100">
                 {formatNumber(stats.totalVisits)}
               </strong>{' '}
-              Visitor
+              Total Kunjungan
             </span>
           </div>
 

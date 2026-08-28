@@ -156,19 +156,51 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
 
       {/* Leaderboard Table / Cards */}
       {isLoading ? (
-        <div className="text-center py-16 bg-white border border-slate-200 rounded-3xl p-6 shadow-2xs">
-          <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-xs text-slate-500 font-bold">Memuat data papan peringkat tercepat...</p>
+        <div
+          id="leaderboard-skeleton"
+          className="space-y-3"
+          aria-busy="true"
+          aria-label="Memuat papan peringkat"
+        >
+          <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-2">
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className={`rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 ${
+                  i === 1 ? 'scale-105 order-2' : i === 0 ? 'order-1 mt-4' : 'order-3 mt-4'
+                }`}
+              >
+                <div className="mx-auto mb-2 h-10 w-10 rounded-full bg-slate-200 dark:bg-slate-700 animate-pulse" />
+                <div className="mx-auto h-3 w-16 rounded bg-slate-100 dark:bg-slate-800 animate-pulse mb-2" />
+                <div className="mx-auto h-6 w-20 rounded-lg bg-slate-100 dark:bg-slate-800 animate-pulse" />
+              </div>
+            ))}
+          </div>
+          {[0, 1, 2, 3].map((i) => (
+            <div
+              key={i}
+              className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3 shadow-2xs"
+            >
+              <div className="flex items-center gap-3 flex-1 min-w-0">
+                <div className="h-8 w-8 rounded-full bg-slate-200 dark:bg-slate-700 animate-pulse shrink-0" />
+                <div className="space-y-2 flex-1">
+                  <div className="h-3.5 w-28 rounded bg-slate-200 dark:bg-slate-700 animate-pulse" />
+                  <div className="h-2.5 w-40 max-w-full rounded bg-slate-100 dark:bg-slate-800 animate-pulse" />
+                </div>
+              </div>
+              <div className="h-10 w-24 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse shrink-0" />
+            </div>
+          ))}
         </div>
       ) : leaderboardData.length === 0 ? (
         <div
           id="leaderboard-empty-state"
-          className="text-center py-16 px-4 bg-white border border-slate-200 rounded-3xl shadow-2xs"
+          className="text-center py-16 px-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xs"
         >
           <div className="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto mb-3 border border-amber-200 text-amber-500">
             <Sparkles className="w-8 h-8" />
           </div>
-          <h3 className="text-lg font-black text-slate-800 mb-1">Belum Ada Rekor Penyelesaian</h3>
+          <h3 className="text-lg font-black text-slate-800 dark:text-white mb-1">Belum Ada Rekor Penyelesaian</h3>
           <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed mb-4">
             Jadilah orang pertama yang menyelesaikan teka-teki silang ini secepat mungkin dan raih Medali Emas di puncak klasemen!
           </p>

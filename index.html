@@ -2,16 +2,50 @@
 <html lang="id">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>Teka Teki Sharing - Buat & Bagikan TTS</title>
-    <meta name="description" content="Game teka-teki silang interaktif untuk membuat, membagikan, dan memainkan TTS dengan keyboard bawaan dan leaderboard tercepat." />
+    <meta name="description" content="Game teka-teki silang interaktif untuk membuat, membagikan, dan memainkan TTS bersama komunitas. Leaderboard speedrun, sinkron cloud, dan keyboard mobile-friendly." />
+    <meta name="theme-color" content="#4F46E5" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0F172A" media="(prefers-color-scheme: dark)" />
+    <meta name="color-scheme" content="light dark" />
+
+    <!-- Open Graph / WhatsApp / Telegram preview -->
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="id_ID" />
+    <meta property="og:site_name" content="Teka Teki Sharing" />
+    <meta property="og:title" content="Teka Teki Sharing — Buat & Bagikan TTS" />
+    <meta property="og:description" content="Buat, bagikan, dan selesaikan teka-teki silang bersama komunitas. Tantang rekor speedrun temanmu!" />
+    <meta property="og:url" content="https://tekatekisharing.vercel.app/" />
+    <meta property="og:image" content="https://tekatekisharing.vercel.app/og-cover.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Teka Teki Sharing — Buat & Bagikan TTS" />
+    <meta name="twitter:description" content="Buat, bagikan, dan selesaikan teka-teki silang bersama komunitas." />
+    <meta name="twitter:image" content="https://tekatekisharing.vercel.app/og-cover.png" />
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+      /* Safe area for notched phones / home indicator */
+      html, body {
+        padding: 0;
+        margin: 0;
+        min-height: 100%;
+        min-height: 100dvh;
+      }
+      #root {
+        min-height: 100%;
+        min-height: 100dvh;
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+      }
+    </style>
   </head>
   <body class="bg-[#F3F4F6] text-[#1F2937] min-h-screen antialiased selection:bg-indigo-600 selection:text-white font-['Plus_Jakarta_Sans',sans-serif]">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
