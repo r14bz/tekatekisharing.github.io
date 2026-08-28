@@ -922,7 +922,29 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
                       <button
                         type="button"
                         id={`btn-card-play-${puzzle.id}`}
-                        onClick={() => onPlayPuzzle(puzzle)}
+                        onClick={() => {
+                          // "Main Ulang" (sudah selesai): hapus progress agar grid kosong
+                          if (isCompleted) {
+                            const empty = Array.from(
+                              { length: puzzle.height },
+                              () => Array.from({ length: puzzle.width }, () => '')
+                            );
+                            StorageService.deleteProgress(puzzle.id);
+                            StorageService.saveProgress({
+                              puzzleId: puzzle.id,
+                              userGrid: empty,
+                              isCompleted: false,
+                              timeSpentMs: 0,
+                              lastPlayedAt: Date.now(),
+                            });
+                            setProgressMap((prev) => {
+                              const next = { ...prev };
+                              delete next[puzzle.id];
+                              return next;
+                            });
+                          }
+                          onPlayPuzzle(puzzle);
+                        }}
                         className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm hover:shadow-indigo-500/25 cursor-pointer shrink-0"
                       >
                         <Play className="w-3.5 h-3.5 fill-current" />
