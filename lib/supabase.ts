@@ -483,7 +483,7 @@ export async function fetchLeaderboardsFromSupabase(): Promise<Record<string, an
         playerAvatar: row.player_avatar || row.playerAvatar || row.avatar || row.data?.playerAvatar || "??",
         playerId: row.player_id || row.playerId || row.data?.playerId || null,
         playerEmail: row.player_email || row.playerEmail || row.email || row.data?.playerEmail || null,
-        timeMs: Number(row.time_ms ?? row.timeMs ?? row.time ?? row.duration ?? row.data?.timeMs) || 0,
+        timeMs: Number(row.time_ms ?? row.completion_time ?? row.timeMs ?? row.time ?? row.duration ?? row.duration_ms ?? row.data?.timeMs) || 0,
         score: Number(row.score ?? row.data?.score) || 1000,
         formattedTime: row.formatted_time || row.formattedTime || row.data?.formattedTime || null,
         completedAt: Number(row.completed_at ?? row.completedAt ?? row.created_at ?? row.data?.completedAt) || Date.now(),
@@ -500,12 +500,7 @@ export async function fetchLeaderboardsFromSupabase(): Promise<Record<string, an
 
     return map;
   } catch (err) {
-    console.error("[Supabase] fetchLeaderboards exception:", err);
-    return null;
-  }
-}
-
-export async function insertLeaderboardEntryToSupabase(
+    console.error("[Supabase] fetchLeaderboards eexport async function insertLeaderboardEntryToSupabase(
   puzzleId: string,
   entry: any
 ): Promise<{ ok: boolean; error?: string }> {
@@ -518,59 +513,76 @@ export async function insertLeaderboardEntryToSupabase(
   }
 
   const entryId = String(entry.id || "lead_" + Math.random().toString(36).substring(2, 9));
+  const timeMs = Math.max(1, Number(entry.timeMs) || 0);
+  const score = Math.max(0, Number(entry.score) || 1000);
+  const completedAt = Number(entry.completedAt) || Date.now();
+  const playerName = String(entry.playerName || "Pemain TTS").slice(0, 120);
+
+  // Sertakan alias kolom yang umum di schema berbeda
+  // (time_ms vs completion_time, completed_at vs created_at, dll.)
   let payload: Record<string, any> = {
     id: entryId,
     puzzle_id: String(puzzleId),
-    player_name: String(entry.playerName || "Pemain TTS").slice(0, 120),
+    player_name: playerName,
     player_avatar: entry.playerAvatar || "🦊",
     player_id: entry.playerId || null,
     player_email: entry.playerEmail || null,
-    time_ms: Math.max(1, Number(entry.timeMs) || 0),
-    score: Math.max(0, Number(entry.score) || 1000),
+    time_ms: timeMs,
+    completion_time: timeMs,
+    duration_ms: timeMs,
+    score,
     formatted_time: entry.formattedTime || null,
-    completed_at: Number(entry.completedAt) || Date.now(),
+    completed_at: completedAt,
+    created_at: completedAt,
   };
 
-  // Hanya tabel singular: public.leaderboard (bukan leaderboards)
   const table = "leaderboard";
   let lastError = "";
 
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 12; i++) {
     const up = await client.from(table).upsert(payload, { onConflict: "id" });
     if (!up.error) {
-      console.log("[Supabase] Leaderboard upsert OK:", entryId, "time=", payload.time_ms);
+      console.log("[Supabase] Leaderboard upsert OK:", entryId, "time=", timeMs);
       return { ok: true };
     }
     lastError = up.error.message || String(up.error);
     console.warn("[Supabase] Leaderboard upsert attempt:", lastError);
 
-    // Duplicate / conflict → anggap sukses jika row ada
     if (/duplicate|unique/i.test(lastError)) {
       return { ok: true };
     }
 
-    const m = lastError.match(/Could not find the '([^']+)' column/i);
-    if (m && m[1] && m[1] in payload) {
-      delete payload[m[1]];
+    // Kolom tidak ada → buang kolom itu
+    const mCol = lastError.match(/Could not find the '([^']+)' column/i);
+    if (mCol && mCol[1] && mCol[1] in payload) {
+      delete payload[mCol[1]];
       continue;
     }
 
-    // Minimal columns
-    if (i === 0 || m) {
-      payload = {
-        id: entryId,
-        puzzle_id: String(puzzleId),
-        player_name: String(entry.playerName || "Pemain TTS").slice(0, 120),
-        time_ms: Math.max(1, Number(entry.timeMs) || 0),
-        score: Math.max(0, Number(entry.score) || 1000),
-        completed_at: Number(entry.completedAt) || Date.now(),
-      };
+    // NOT NULL constraint → isi nilai default untuk kolom itu
+    const mNull = lastError.match(/null value in column "([^"]+)"/i);
+    if (mNull && mNull[1]) {
+      const col = mNull[1];
+      if (col === "completion_time" || col === "time_ms" || col === "duration_ms" || col === "time") {
+        payload[col] = timeMs;
+      } else if (col === "completed_at" || col === "created_at") {
+        payload[col] = completedAt;
+      } else if (col === "score") {
+        payload[col] = score;
+      } else if (col === "player_name" || col === "name") {
+        payload[col] = playerName;
+      } else if (col === "puzzle_id") {
+        payload[col] = String(puzzleId);
+      } else {
+        // fallback generik
+        payload[col] = payload.time_ms || payload.score || playerName || completedAt || "";
+      }
       continue;
     }
+
     break;
   }
 
-  // Last resort: plain insert
   const ins = await client.from(table).insert(payload);
   if (!ins.error) {
     console.log("[Supabase] Leaderboard insert OK:", entryId);
@@ -580,6 +592,9 @@ export async function insertLeaderboardEntryToSupabase(
 
   console.warn("[Supabase] Insert leaderboard GAGAL:", lastError);
   return { ok: false, error: lastError || "unknown error" };
+}
+
+error: lastError || "unknown error" };
 }
 
 export async function fetchUserAccountsFromSupabase(): Promise<Record<string, any> | null> {
