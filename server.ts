@@ -22,6 +22,9 @@ import {
 const app = express();
 const PORT = 3000;
 
+// Matikan ETag: mencegah 304 menahan data admin/API yang sudah basi antar instance Vercel
+app.set("etag", false);
+
 // Enable HTTP response compression for high throughput & low bandwidth latency
 app.use(compression());
 
@@ -31,6 +34,15 @@ app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Token, Accept, x-supabase-url, x-supabase-key, X-Supabase-Url, X-Supabase-Key, *");
   res.setHeader("Access-Control-Max-Age", "86400");
+
+  // API dinamis: jangan di-cache browser/CDN (hindari 304 dengan body kosong/basi)
+  if (req.path.startsWith("/api") || req.url?.startsWith("/api")) {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.removeHeader("ETag");
+  }
+
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
@@ -1560,12 +1572,10 @@ app.post("/api/auth/auto-sync", async (req, res) => {
       };
     }
 
-    // Security: jika token server ada dan client kirim token beda → tolak
+    // Token beda antar instance: izinkan sync jika email cocok, perbarui token
     if (account.authToken && token && account.authToken !== token) {
-      return res.status(403).json({
-        success: false,
-        message: "Token otentikasi tidak valid atau telah kadaluarsa. Silakan login kembali.",
-      });
+      console.warn("[auto-sync] Token mismatch untuk", cleanEmail, "- memperbarui token instance");
+      account.authToken = token;
     }
 
     account.lastSyncedAt = Date.now();
