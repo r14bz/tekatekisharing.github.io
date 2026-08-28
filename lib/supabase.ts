@@ -518,7 +518,7 @@ export async function insertLeaderboardEntryToSupabase(
   }
 
   const entryId = String(entry.id || "lead_" + Math.random().toString(36).substring(2, 9));
-  const base: Record<string, any> = {
+  let payload: Record<string, any> = {
     id: entryId,
     puzzle_id: String(puzzleId),
     player_name: String(entry.playerName || "Pemain TTS").slice(0, 120),
@@ -531,58 +531,52 @@ export async function insertLeaderboardEntryToSupabase(
     completed_at: Number(entry.completedAt) || Date.now(),
   };
 
-  const tableNames = ["leaderboard", "leaderboards"];
+  // Hanya tabel singular: public.leaderboard (bukan leaderboards)
+  const table = "leaderboard";
   let lastError = "";
 
-  for (const table of tableNames) {
-    let payload = { ...base };
-    for (let i = 0; i < 8; i++) {
-      // Coba upsert
-      let result = await client.from(table).upsert(payload, { onConflict: "id" });
-      if (!result.error) {
-        console.log("[Supabase] Leaderboard OK via", table, entryId, "time=", payload.time_ms);
-        return { ok: true };
-      }
-      lastError = result.error.message || String(result.error);
-
-      // Coba insert biasa
-      result = await client.from(table).insert(payload);
-      if (!result.error) {
-        console.log("[Supabase] Leaderboard INSERT OK via", table, entryId);
-        return { ok: true };
-      }
-      lastError = result.error.message || String(result.error);
-
-      // Strip kolom tidak dikenal
-      const m = lastError.match(/Could not find the '([^']+)' column/i);
-      if (m && m[1] && m[1] in payload) {
-        console.warn("[Supabase] Strip kolom leaderboard.", m[1]);
-        delete payload[m[1]];
-        continue;
-      }
-
-      // Minimal
-      payload = {
-        id: base.id,
-        puzzle_id: base.puzzle_id,
-        player_name: base.player_name,
-        time_ms: base.time_ms,
-        score: base.score,
-      };
-      result = await client.from(table).upsert(payload, { onConflict: "id" });
-      if (!result.error) {
-        console.log("[Supabase] Leaderboard OK (minimal) via", table, entryId);
-        return { ok: true };
-      }
-      lastError = result.error.message || String(result.error);
-
-      // Tabel tidak ada → coba nama lain
-      if (/relation|does not exist|schema cache/i.test(lastError)) {
-        break;
-      }
-      break;
+  for (let i = 0; i < 10; i++) {
+    const up = await client.from(table).upsert(payload, { onConflict: "id" });
+    if (!up.error) {
+      console.log("[Supabase] Leaderboard upsert OK:", entryId, "time=", payload.time_ms);
+      return { ok: true };
     }
+    lastError = up.error.message || String(up.error);
+    console.warn("[Supabase] Leaderboard upsert attempt:", lastError);
+
+    // Duplicate / conflict → anggap sukses jika row ada
+    if (/duplicate|unique/i.test(lastError)) {
+      return { ok: true };
+    }
+
+    const m = lastError.match(/Could not find the '([^']+)' column/i);
+    if (m && m[1] && m[1] in payload) {
+      delete payload[m[1]];
+      continue;
+    }
+
+    // Minimal columns
+    if (i === 0 || m) {
+      payload = {
+        id: entryId,
+        puzzle_id: String(puzzleId),
+        player_name: String(entry.playerName || "Pemain TTS").slice(0, 120),
+        time_ms: Math.max(1, Number(entry.timeMs) || 0),
+        score: Math.max(0, Number(entry.score) || 1000),
+        completed_at: Number(entry.completedAt) || Date.now(),
+      };
+      continue;
+    }
+    break;
   }
+
+  // Last resort: plain insert
+  const ins = await client.from(table).insert(payload);
+  if (!ins.error) {
+    console.log("[Supabase] Leaderboard insert OK:", entryId);
+    return { ok: true };
+  }
+  lastError = ins.error.message || lastError;
 
   console.warn("[Supabase] Insert leaderboard GAGAL:", lastError);
   return { ok: false, error: lastError || "unknown error" };
