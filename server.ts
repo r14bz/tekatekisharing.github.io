@@ -1372,7 +1372,7 @@ app.post("/api/auth/login-email", (req, res) => {
 });
 
 // 4. Secure Live Background Auto-Sync for Verified Accounts
-app.post("/api/auth/auto-sync", (req, res) => {
+app.post("/api/auth/auto-sync", async (req, res) => {
   try {
     const { profile, puzzles, drafts, progress, authToken } = req.body;
     if (!profile || !profile.email) {
@@ -1381,13 +1381,48 @@ app.post("/api/auth/auto-sync", (req, res) => {
 
     const cleanEmail = profile.email.trim().toLowerCase();
     const token = authToken || req.headers.authorization?.replace("Bearer ", "");
-    const account = userAccountsCache[cleanEmail] || (profile.id && userAccountsCache[profile.id]);
 
+    // Cari di memory instance ini dulu
+    let account =
+      userAccountsCache[cleanEmail] ||
+      (profile.id ? userAccountsCache[profile.id] : null);
+
+    // Jika instance lain / cold start: ambil dari Supabase
     if (!account) {
-      return res.status(404).json({ success: false, message: "Akun cloud tidak ditemukan." });
+      try {
+        const sbAccounts = await fetchUserAccountsFromSupabase();
+        if (sbAccounts) {
+          userAccountsCache = { ...userAccountsCache, ...sbAccounts };
+          writeJsonFile(USER_ACCOUNTS_FILE, userAccountsCache);
+          account =
+            userAccountsCache[cleanEmail] ||
+            (profile.id ? userAccountsCache[profile.id] : null);
+        }
+      } catch (e) {
+        console.warn("[auto-sync] Supabase account lookup note:", e);
+      }
     }
 
-    // Security check: Must have matching authToken if account has authToken set
+    if (!account) {
+      // Jangan 404 keras — buat entri minimal agar sync tetap jalan
+      account = {
+        id: profile.id || "u_" + Date.now().toString(36),
+        email: cleanEmail,
+        name: profile.name || "Pemain TTS",
+        avatar: profile.avatar || "🦊",
+        provider: profile.provider || "email",
+        totalSolved: profile.totalSolved || 0,
+        totalCreated: profile.totalCreated || 0,
+        puzzles: [],
+        drafts: [],
+        progress: {},
+        createdAt: Date.now(),
+        lastSyncedAt: Date.now(),
+        authToken: token || null,
+      };
+    }
+
+    // Security: jika token server ada dan client kirim token beda → tolak
     if (account.authToken && token && account.authToken !== token) {
       return res.status(403).json({
         success: false,
@@ -1403,6 +1438,7 @@ app.post("/api/auth/auto-sync", (req, res) => {
     if (Array.isArray(puzzles)) account.puzzles = puzzles;
     if (Array.isArray(drafts)) account.drafts = drafts;
     if (progress) account.progress = progress;
+    if (token && !account.authToken) account.authToken = token;
 
     userAccountsCache[cleanEmail] = account;
     if (account.id) userAccountsCache[account.id] = account;
