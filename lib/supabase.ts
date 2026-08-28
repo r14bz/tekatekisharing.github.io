@@ -511,25 +511,54 @@ export async function insertLeaderboardEntryToSupabase(puzzleId: string, entry: 
 
   try {
     const entryId = String(entry.id || "lead_" + Math.random().toString(36).substring(2, 9));
-    const payload: Record<string, any> = {
+    let payload: Record<string, any> = {
       id: entryId,
       puzzle_id: String(puzzleId),
-      player_name: entry.playerName || "Pemain TTS",
-      player_avatar: entry.playerAvatar || "??",
+      player_name: String(entry.playerName || "Pemain TTS").slice(0, 120),
+      player_avatar: entry.playerAvatar || "🦊",
       player_id: entry.playerId || null,
       player_email: entry.playerEmail || null,
-      time_ms: Number(entry.timeMs) || 0,
-      score: Number(entry.score) || 1000,
+      time_ms: Math.max(1, Number(entry.timeMs) || 0),
+      score: Math.max(0, Number(entry.score) || 1000),
       formatted_time: entry.formattedTime || null,
       completed_at: Number(entry.completedAt) || Date.now(),
     };
 
-    const { error } = await client.from("leaderboard").upsert(payload, { onConflict: "id" });
-    if (error) {
-      console.warn("[Supabase] Insert leaderboard error:", error.message);
+    for (let i = 0; i < 10; i++) {
+      const { error } = await client.from("leaderboard").upsert(payload, { onConflict: "id" });
+      if (!error) {
+        console.log("[Supabase] Leaderboard upsert OK:", entryId, "puzzle=", puzzleId, "time=", payload.time_ms);
+        return true;
+      }
+
+      const msg = error.message || "";
+      console.warn("[Supabase] Insert leaderboard attempt:", msg);
+
+      // Strip unknown column
+      const m = msg.match(/Could not find the '([^']+)' column/i);
+      if (m && m[1] && m[1] in payload) {
+        delete payload[m[1]];
+        continue;
+      }
+
+      // RLS / permission → try minimal core columns
+      const core = {
+        id: payload.id,
+        puzzle_id: payload.puzzle_id,
+        player_name: payload.player_name,
+        time_ms: payload.time_ms,
+        score: payload.score,
+        completed_at: payload.completed_at,
+      };
+      const { error: coreErr } = await client.from("leaderboard").upsert(core, { onConflict: "id" });
+      if (!coreErr) {
+        console.log("[Supabase] Leaderboard upsert OK (core):", entryId);
+        return true;
+      }
+      console.warn("[Supabase] Insert leaderboard error:", coreErr.message);
       return false;
     }
-    return true;
+    return false;
   } catch (err) {
     console.error("[Supabase] Insert leaderboard exception:", err);
     return false;
