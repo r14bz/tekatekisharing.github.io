@@ -20,6 +20,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
   const [leaderboardData, setLeaderboardData] = useState<LeaderboardEntry[]>([]);
   const [allPuzzles, setAllPuzzles] = useState<CrosswordPuzzle[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [realtimeTick, setRealtimeTick] = useState(0);
 
   useEffect(() => {
     const puzzles = StorageService.getCommunityPuzzles();
@@ -86,7 +87,19 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [selectedPuzzleId]);
+  }, [selectedPuzzleId, realtimeTick]);
+
+  // Refetch leaderboard saat Realtime
+  useEffect(() => {
+    const onRealtime = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      if (!detail || detail.type === 'leaderboard') {
+        setRealtimeTick((t) => t + 1);
+      }
+    };
+    window.addEventListener('tts-realtime', onRealtime);
+    return () => window.removeEventListener('tts-realtime', onRealtime);
+  }, []);
 
   const selectedPuzzle = allPuzzles.find((p) => p.id === selectedPuzzleId);
 

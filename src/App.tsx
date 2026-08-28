@@ -12,6 +12,7 @@ import { AdminView } from './components/AdminView';
 import { ShareModal } from './components/ShareModal';
 import { AccountSyncModal } from './components/AccountSyncModal';
 import { FooterStats } from './components/FooterStats';
+import { startRealtime } from './services/realtimeService';
 import { Megaphone, X } from 'lucide-react';
 
 export default function App() {
@@ -33,6 +34,19 @@ export default function App() {
         setAnnouncement(ann);
       }
     });
+  }, []);
+
+  // Supabase Realtime: invalidasi cache + minta UI refetch saat data berubah
+  useEffect(() => {
+    const stop = startRealtime({
+      onPuzzleChange: () => {
+        window.dispatchEvent(new CustomEvent('tts-realtime', { detail: { type: 'puzzles' } }));
+      },
+      onLeaderboardChange: () => {
+        window.dispatchEvent(new CustomEvent('tts-realtime', { detail: { type: 'leaderboard' } }));
+      },
+    });
+    return stop;
   }, []);
 
 

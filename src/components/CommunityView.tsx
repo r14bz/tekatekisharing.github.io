@@ -164,6 +164,18 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
     loadData(true);
   }, [userProfile.isLoggedIn, userProfile.id, userProfile.email]);
 
+  // Refetch saat Supabase Realtime memberi sinyal perubahan puzzles
+  useEffect(() => {
+    const onRealtime = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      if (!detail || detail.type === 'puzzles') {
+        loadData(true);
+      }
+    };
+    window.addEventListener('tts-realtime', onRealtime);
+    return () => window.removeEventListener('tts-realtime', onRealtime);
+  }, []);
+
   const handleUpdatePuzzle = (updated: CrosswordPuzzle) => {
     setCommunityPuzzles((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
     setMyPuzzles((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
