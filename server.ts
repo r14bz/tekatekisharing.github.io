@@ -669,24 +669,41 @@ app.post("/api/puzzles/batch-sync", (req, res) => {
 
 // POST reaction to a crossword puzzle (like, laugh, love, think, fire, sad)
 // Requirement: Only logged-in users and properly accumulated per user
-app.post("/api/puzzles/:id/react", (req, res) => {
+app.post("/api/puzzles/:id/react", async (req, res) => {
   try {
     const { id } = req.params;
     const { reactionType, previousReaction, userId, userEmail } = req.body;
     const authHeader = req.headers.authorization;
-    const authorHeaderId = req.headers['x-author-id'] as string;
+    const authorHeaderId = req.headers["x-author-id"] as string;
     const effectiveUserId = userId || authorHeaderId;
 
-    // Requirement 3: Komentar dan reaksi hanya untuk pengguna yang sudah login
     if (!effectiveUserId && !userEmail && !authHeader) {
       return res.status(401).json({
         success: false,
-        message: "Hanya pengguna yang sudah login yang dapat memberikan reaksi pada teka-teki silang.",
+        message: "Hanya pengguna yang sudah login yang dapat memberikan reaksi.",
       });
     }
 
-    const validTypes = ['like', 'laugh', 'love', 'think', 'fire', 'sad'];
-    const puzzle = puzzlesCache.find((p) => p.id === id);
+    const validTypes = ["like", "laugh", "love", "think", "fire", "sad"];
+    const userKey = String(effectiveUserId || userEmail || "anon").toLowerCase();
+
+    // Ambil puzzle: memory → Supabase
+    let puzzle = puzzlesCache.find((p) => p.id === id);
+    if (!puzzle) {
+      try {
+        const sbPuzzles = await fetchPuzzlesFromSupabase();
+        if (sbPuzzles && sbPuzzles.length > 0) {
+          const map = new Map<string, any>();
+          puzzlesCache.forEach((p) => map.set(p.id, normalizePuzzle(p)));
+          sbPuzzles.forEach((p) => map.set(p.id, normalizePuzzle(p)));
+          puzzlesCache = Array.from(map.values());
+          writeJsonFile(PUZZLES_FILE, puzzlesCache);
+          puzzle = puzzlesCache.find((p) => p.id === id);
+        }
+      } catch (e) {
+        console.warn("[react] Supabase lookup note:", e);
+      }
+    }
 
     if (!puzzle) {
       return res.status(404).json({ success: false, message: "Teka-teki silang tidak ditemukan." });
@@ -699,16 +716,19 @@ app.post("/api/puzzles/:id/react", (req, res) => {
       puzzle.userReactions = {};
     }
 
-    // Determine the user's previous reaction recorded on the server
-    const userKey = (effectiveUserId || userEmail || 'user').trim();
-    const serverPreviousReaction = puzzle.userReactions[userKey] || previousReaction;
+    const serverPreviousReaction = puzzle.userReactions[userKey] || previousReaction || null;
 
-    // If there was a previous reaction from this user, decrement it safely
-    if (serverPreviousReaction && validTypes.includes(serverPreviousReaction) && puzzle.reactions[serverPreviousReaction] > 0) {
-      puzzle.reactions[serverPreviousReaction] = Math.max(0, puzzle.reactions[serverPreviousReaction] - 1);
+    if (
+      serverPreviousReaction &&
+      validTypes.includes(serverPreviousReaction) &&
+      (puzzle.reactions[serverPreviousReaction] || 0) > 0
+    ) {
+      puzzle.reactions[serverPreviousReaction] = Math.max(
+        0,
+        (puzzle.reactions[serverPreviousReaction] || 0) - 1
+      );
     }
 
-    // If new reaction is selected, increment it and store user key
     if (reactionType && validTypes.includes(reactionType)) {
       puzzle.reactions[reactionType] = (puzzle.reactions[reactionType] || 0) + 1;
       puzzle.userReactions[userKey] = reactionType;
@@ -716,15 +736,24 @@ app.post("/api/puzzles/:id/react", (req, res) => {
       delete puzzle.userReactions[userKey];
     }
 
+    puzzle.updatedAt = Date.now();
+
+    const idx = puzzlesCache.findIndex((p) => p.id === id);
+    if (idx >= 0) puzzlesCache[idx] = puzzle;
     writeJsonFile(PUZZLES_FILE, puzzlesCache);
     writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
 
-    upsertPuzzleToSupabase(puzzle).catch(() => {});
+    // Tunggu upsert supaya reactions benar-benar masuk Supabase
+    const ok = await upsertPuzzleToSupabase(puzzle);
+    if (!ok) {
+      console.warn("[react] Upsert ke Supabase gagal untuk", id, "reactions=", puzzle.reactions);
+    }
 
     res.json({
       success: true,
       reactions: puzzle.reactions,
       userReaction: puzzle.userReactions[userKey] || null,
+      persisted: ok,
       message: "Reaksi untuk teka-teki silang berhasil diperbarui!",
     });
   } catch (error) {
@@ -732,6 +761,7 @@ app.post("/api/puzzles/:id/react", (req, res) => {
     res.status(500).json({ success: false, message: "Gagal mengirim reaksi." });
   }
 });
+
 
 // GET comments for a crossword puzzle
 app.get("/api/puzzles/:id/comments", (req, res) => {
@@ -748,7 +778,7 @@ app.get("/api/puzzles/:id/comments", (req, res) => {
 
 // POST add comment to a crossword puzzle
 // Requirement: Only logged-in users
-app.post("/api/puzzles/:id/comments", (req, res) => {
+app.post("/api/puzzles/:id/comments", async (req, res) => {
   try {
     const { id } = req.params;
     const { authorName, authorAvatar, authorId, authorEmail, content } = req.body;
@@ -792,7 +822,8 @@ app.post("/api/puzzles/:id/comments", (req, res) => {
     writeJsonFile(PUZZLES_FILE, puzzlesCache);
     writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
 
-    upsertPuzzleToSupabase(puzzle).catch(() => {});
+    const ok = await upsertPuzzleToSupabase(puzzle);
+    if (!ok) console.warn("[comment] Upsert gagal", id);
 
     res.json({
       success: true,
