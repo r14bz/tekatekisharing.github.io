@@ -498,8 +498,23 @@ CREATE TABLE IF NOT EXISTS profiles (
 
 
 // GET all published community puzzles (shared across all users)
-app.get("/api/puzzles", (req, res) => {
-  // Sort by newest first
+// Always try Supabase first so every Vercel instance returns fresh data (Realtime-friendly)
+app.get("/api/puzzles", async (req, res) => {
+  try {
+    const sbPuzzles = await fetchPuzzlesFromSupabase();
+    if (sbPuzzles && sbPuzzles.length > 0) {
+      const map = new Map<string, any>();
+      puzzlesCache.forEach((p) => map.set(p.id, normalizePuzzle(p)));
+      sbPuzzles.forEach((p) => map.set(p.id, normalizePuzzle(p)));
+      puzzlesCache = Array.from(map.values()).sort(
+        (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
+      );
+      writeJsonFile(PUZZLES_FILE, puzzlesCache);
+    }
+  } catch (err) {
+    console.warn("[API] /puzzles Supabase refresh note:", err);
+  }
+
   const sorted = [...puzzlesCache].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   res.json({
     success: true,
@@ -507,8 +522,21 @@ app.get("/api/puzzles", (req, res) => {
   });
 });
 
-// GET puzzle by ID or custom code
-app.get("/api/puzzles/:query", (req, res) => {
+// GET puzzle by ID or custom code (refresh from Supabase when possible)
+app.get("/api/puzzles/:query", async (req, res) => {
+  try {
+    const sbPuzzles = await fetchPuzzlesFromSupabase();
+    if (sbPuzzles && sbPuzzles.length > 0) {
+      const map = new Map<string, any>();
+      puzzlesCache.forEach((p) => map.set(p.id, normalizePuzzle(p)));
+      sbPuzzles.forEach((p) => map.set(p.id, normalizePuzzle(p)));
+      puzzlesCache = Array.from(map.values());
+      writeJsonFile(PUZZLES_FILE, puzzlesCache);
+    }
+  } catch (err) {
+    console.warn("[API] /puzzles/:query Supabase refresh note:", err);
+  }
+
   const query = req.params.query.trim().toLowerCase();
   const found = puzzlesCache.find(
     (p) =>
@@ -519,7 +547,10 @@ app.get("/api/puzzles/:query", (req, res) => {
   if (found) {
     res.json({ success: true, data: found });
   } else {
-    res.status(404).json({ success: false, message: `Teka-teki dengan kode/ID "${req.params.query}" tidak ditemukan di database cloud.` });
+    res.status(404).json({
+      success: false,
+      message: `Teka-teki dengan kode/ID "${req.params.query}" tidak ditemukan di database cloud.`,
+    });
   }
 });
 

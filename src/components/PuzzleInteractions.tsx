@@ -140,6 +140,38 @@ export const PuzzleInteractions: React.FC<PuzzleInteractionsProps> = ({
     setUserReaction(StorageService.getUserPuzzleReaction(puzzle.id));
   }, [puzzle.id, puzzle.reactions, puzzle.comments]);
 
+  // Realtime: refresh reactions & comments from API when puzzles table changes
+  useEffect(() => {
+    const onRealtime = async (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      if (detail && detail.type && detail.type !== 'puzzles') return;
+      try {
+        const res = await fetch(`/api/puzzles/${encodeURIComponent(puzzle.id)}`, {
+          headers: { Accept: 'application/json' },
+        });
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!json?.success || !json.data) return;
+        const data = json.data;
+        if (data.reactions) {
+          setReactions(data.reactions);
+          StorageService.updatePuzzleReactions(puzzle.id, data.reactions);
+        }
+        if (Array.isArray(data.comments)) {
+          setComments(data.comments);
+        }
+        if (onUpdatePuzzle) {
+          onUpdatePuzzle({ ...puzzle, ...data });
+        }
+      } catch {
+        // ignore network errors
+      }
+    };
+    window.addEventListener('tts-realtime', onRealtime);
+    return () => window.removeEventListener('tts-realtime', onRealtime);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [puzzle.id]);
+
   const handleReact = async (type: PuzzleReactionType, e: React.MouseEvent) => {
     e.stopPropagation();
 

@@ -81,6 +81,7 @@ export const PlayerView: React.FC<PlayerViewProps> = ({
   );
   const [showWinModal, setShowWinModal] = useState<boolean>(false);
   const [showResetConfirm, setShowResetConfirm] = useState<boolean>(false);
+  const skipAutosaveRef = React.useRef(false);
 
   // Check Answer Feedback state
   const [checkFeedback, setCheckFeedback] = useState<{
@@ -106,6 +107,10 @@ export const PlayerView: React.FC<PlayerViewProps> = ({
 
   // Debounced Auto-Save progress to storage to prevent disk/network spam
   useEffect(() => {
+    if (skipAutosaveRef.current) {
+      skipAutosaveRef.current = false;
+      return;
+    }
     const saveTimer = setTimeout(() => {
       const progress: PuzzleProgress = {
         puzzleId: puzzle.id,
@@ -119,7 +124,7 @@ export const PlayerView: React.FC<PlayerViewProps> = ({
     }, 400);
 
     return () => clearTimeout(saveTimer);
-  }, [userGrid, isCompleted, puzzle.id]);
+  }, [userGrid, isCompleted, puzzle.id, timeSpentMs]);
 
   // Find active clue based on activeCell and activeDirection
   const getActiveClue = useCallback((): ClueItem | null => {
@@ -548,7 +553,13 @@ export const PlayerView: React.FC<PlayerViewProps> = ({
   };
 
   const handleConfirmReset = () => {
-    const empty = Array.from({ length: rows }, () => Array(cols).fill(''));
+    const empty = Array.from({ length: rows }, () =>
+      Array.from({ length: cols }, () => '')
+    );
+
+    // Cegah autosave lama menimpa grid kosong
+    skipAutosaveRef.current = true;
+
     setUserGrid(empty);
     setTimeSpentMs(0);
     setIsCompleted(false);
@@ -556,7 +567,7 @@ export const PlayerView: React.FC<PlayerViewProps> = ({
     setShowResetConfirm(false);
     setCheckFeedback(null);
 
-    // Save reset progress to storage
+    StorageService.deleteProgress(puzzle.id);
     StorageService.saveProgress({
       puzzleId: puzzle.id,
       userGrid: empty,
@@ -566,11 +577,11 @@ export const PlayerView: React.FC<PlayerViewProps> = ({
     });
 
     // Reset active cell to first valid cell
-    for (let r = 0; r < rows; r++) {
+    outer: for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (puzzle.grid[r][c] !== null && puzzle.grid[r][c] !== '') {
           setActiveCell({ row: r, col: c });
-          return;
+          break outer;
         }
       }
     }
