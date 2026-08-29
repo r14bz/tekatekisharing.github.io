@@ -15,6 +15,7 @@ const USER_PUZZLE_REACTIONS_KEY = 'tts_sharing_user_puzzle_reactions';
 const PUZZLE_COMMENTS_MAP_KEY = 'tts_sharing_puzzle_comments_map';
 const PUZZLE_REACTIONS_MAP_KEY = 'tts_sharing_puzzle_reactions_map';
 const THEME_KEY = 'tts_sharing_theme_mode';
+const COLOR_ACCENT_KEY = 'tts_sharing_color_accent';
 
 
 let autoSyncTimer: any = null;
@@ -840,4 +841,30 @@ export const StorageService = {
       // Ignore
     }
   },
+
+  // --- Color accent theme (footer palette) ---
+  getColorAccent(): string {
+    try {
+      const saved = localStorage.getItem(COLOR_ACCENT_KEY);
+      const allowed = ['indigo', 'violet', 'ocean', 'emerald', 'rose', 'amber', 'slate'];
+      if (saved && allowed.includes(saved)) return saved;
+    } catch {
+      // ignore
+    }
+    return 'indigo';
+  },
+
+  setColorAccent(accent: string): void {
+    const allowed = ['indigo', 'violet', 'ocean', 'emerald', 'rose', 'amber', 'slate'];
+    const value = allowed.includes(accent) ? accent : 'indigo';
+    try {
+      localStorage.setItem(COLOR_ACCENT_KEY, value);
+      if (typeof document !== 'undefined') {
+        document.documentElement.setAttribute('data-accent', value);
+      }
+    } catch {
+      // ignore
+    }
+  },
+
 };

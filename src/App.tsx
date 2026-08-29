@@ -50,7 +50,7 @@ export default function App() {
   }, []);
 
 
-  // Sync theme to DOM and storage
+  // Sync light/dark theme to DOM and storage
   useEffect(() => {
     StorageService.setTheme(theme);
     if (theme === 'dark') {
@@ -61,6 +61,12 @@ export default function App() {
       document.body.classList.remove('dark');
     }
   }, [theme]);
+
+  // Apply saved color accent (footer palette) on first load
+  useEffect(() => {
+    const accent = StorageService.getColorAccent();
+    document.documentElement.setAttribute('data-accent', accent);
+  }, []);
 
   const handleToggleTheme = () => {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
