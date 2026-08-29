@@ -275,6 +275,15 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                         <span>{formatDate(puzzle.createdAt)}</span>
                         <span>·</span>
                         <span>{puzzle.playsCount || 0} plays</span>
+                        {puzzle.lastPlayerName ? (
+                          <>
+                            <span>·</span>
+                            <span className="inline-flex items-center gap-1">
+                              <span>{puzzle.lastPlayerAvatar || '🎮'}</span>
+                              <span className="truncate max-w-[100px]">{puzzle.lastPlayerName}</span>
+                            </span>
+                          </>
+                        ) : null}
                         <span>·</span>
                         <span>{reactionCount} reaksi</span>
                       </div>

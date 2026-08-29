@@ -211,7 +211,7 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
   };
 
   // Save Local Profile Details (Only accessible when logged in)
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
     const updated: UserProfile = {
@@ -220,10 +220,26 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
       avatar: selectedAvatar,
     };
     StorageService.saveUserProfile(updated);
-    StorageService.triggerBackgroundAutoSync();
     onProfileUpdated(updated);
-    setSyncStatus('Profil pemain berhasil diperbarui!');
-    setTimeout(() => setSyncStatus(null), 3000);
+    setSyncStatus('Menyimpan profil ke cloud…');
+    try {
+      const res = await fetch('/api/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(updated),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json?.success) {
+        setSyncStatus('Profil & avatar tersinkron ke cloud (terlihat pemain lain)!');
+      } else {
+        StorageService.triggerBackgroundAutoSync();
+        setSyncStatus('Profil lokal disimpan. Sinkron cloud tertunda.');
+      }
+    } catch {
+      StorageService.triggerBackgroundAutoSync();
+      setSyncStatus('Profil lokal disimpan. Periksa koneksi untuk sync cloud.');
+    }
+    setTimeout(() => setSyncStatus(null), 3500);
   };
 
   const handleCopySyncKey = () => {

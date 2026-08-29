@@ -302,6 +302,10 @@ function normalizePuzzle(p: any): any {
     comments: Array.isArray(p.comments) ? p.comments : [],
     playsCount: Number(p.playsCount ?? p.plays_count ?? 0) || 0,
     completionsCount: Number(p.completionsCount ?? p.completions_count ?? 0) || 0,
+    lastPlayerName: p.lastPlayerName || p.last_player_name || undefined,
+    lastPlayerAvatar: p.lastPlayerAvatar || p.last_player_avatar || undefined,
+    lastPlayerId: p.lastPlayerId || p.last_player_id || undefined,
+    lastPlayedAt: Number(p.lastPlayedAt ?? p.last_played_at ?? 0) || undefined,
   };
 }
 
@@ -562,7 +566,20 @@ app.get("/api/puzzles", async (req, res) => {
     console.warn("[API] /puzzles Supabase refresh note:", err);
   }
 
-  const sorted = [...puzzlesCache]
+    // Enrich author avatar/name from live profiles (source of truth for identity)
+  const enriched = puzzlesCache.map((p) => {
+    const pid = p.authorId;
+    if (pid && profilesCache[pid]) {
+      const pr = profilesCache[pid];
+      return {
+        ...p,
+        authorAvatar: pr.avatar || p.authorAvatar || "🦊",
+        authorName: pr.name || p.authorName,
+      };
+    }
+    return p;
+  });
+  const sorted = [...enriched]
     .filter((p) => p && !p.isDraft)
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   res.json({
@@ -743,21 +760,37 @@ app.post("/api/puzzles/:id/play", async (req, res) => {
       return res.status(404).json({ success: false, message: "Teka-teki tidak ditemukan." });
     }
 
+    const body = req.body || {};
+    const playerName = String(body.playerName || body.name || "").trim();
+    const playerAvatar = String(body.playerAvatar || body.avatar || "").trim() || "🦊";
+    const playerId = body.playerId || body.userId || null;
+
     puzzle.playsCount = (Number(puzzle.playsCount) || 0) + 1;
     puzzle.updatedAt = Date.now();
+    if (playerName) {
+      puzzle.lastPlayerName = playerName;
+      puzzle.lastPlayerAvatar = playerAvatar;
+      puzzle.lastPlayerId = playerId || undefined;
+      puzzle.lastPlayedAt = Date.now();
+    }
 
     const idx = puzzlesCache.findIndex((p) => p.id === id);
     if (idx >= 0) puzzlesCache[idx] = puzzle;
     writeJsonFile(PUZZLES_FILE, puzzlesCache);
     writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
 
-    upsertPuzzleToSupabase(puzzle).catch((err) => {
-      console.warn("[play] Upsert Supabase gagal:", err);
-    });
+    const ok = await upsertPuzzleToSupabase(puzzle);
+    if (!ok) {
+      console.warn("[play] Upsert Supabase gagal untuk", id);
+    }
 
     res.json({
       success: true,
       playsCount: puzzle.playsCount,
+      lastPlayerName: puzzle.lastPlayerName || null,
+      lastPlayerAvatar: puzzle.lastPlayerAvatar || null,
+      lastPlayedAt: puzzle.lastPlayedAt || null,
+      persisted: ok,
       message: "Play tercatat.",
     });
   } catch (error) {
@@ -1238,9 +1271,52 @@ app.post("/api/profile", (req, res) => {
     }
     writeJsonFile(PROFILES_FILE, profilesCache);
 
+    // Cascade: update avatar/name on published puzzles & leaderboard so others see it
+    const newAvatar = updatedProfile.avatar || "🦊";
+    const newName = updatedProfile.name || "Pemain TTS";
+    let touchedPuzzles = 0;
+    for (let i = 0; i < puzzlesCache.length; i++) {
+      const p = puzzlesCache[i];
+      if (p.authorId && profile.id && p.authorId === profile.id) {
+        puzzlesCache[i] = { ...p, authorAvatar: newAvatar, authorName: newName, updatedAt: Date.now() };
+        upsertPuzzleToSupabase(puzzlesCache[i]).catch(() => {});
+        touchedPuzzles++;
+      }
+    }
+    if (touchedPuzzles > 0) {
+      writeJsonFile(PUZZLES_FILE, puzzlesCache);
+      writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
+    }
+
+    let touchedLb = 0;
+    for (const pid of Object.keys(leaderboardsCache || {})) {
+      const list = leaderboardsCache[pid];
+      if (!Array.isArray(list)) continue;
+      let changed = false;
+      for (let i = 0; i < list.length; i++) {
+        const e = list[i];
+        if (e.playerId && profile.id && e.playerId === profile.id) {
+          list[i] = { ...e, playerAvatar: newAvatar, playerName: newName };
+          changed = true;
+          touchedLb++;
+        }
+      }
+      if (changed) leaderboardsCache[pid] = list;
+    }
+    if (touchedLb > 0) {
+      try {
+        writeJsonFile(LEADERBOARDS_FILE, leaderboardsCache);
+      } catch { /* ignore */ }
+    }
+
     upsertProfileToSupabase(updatedProfile).catch(() => {});
 
-    res.json({ success: true, message: "Profil berhasil disimpan ke cloud database!", data: updatedProfile });
+    res.json({
+      success: true,
+      message: "Profil berhasil disimpan ke cloud database!",
+      data: updatedProfile,
+      cascaded: { puzzles: touchedPuzzles, leaderboard: touchedLb },
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: "Gagal menyimpan profil." });
   }

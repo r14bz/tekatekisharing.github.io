@@ -145,12 +145,18 @@ export const CloudService = {
     try {
       const key = `tts_play_counted_${puzzleId}`;
       if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(key)) {
-        return null; // sudah dihitung sesi ini
+        return null;
       }
-      const res = await fetch(`/api/puzzles/${encodeURIComponent(puzzleId)}/play`, {
+      const profile = StorageService.getUserProfile();
+      const res = await fetch(`${API_BASE}/puzzles/${encodeURIComponent(puzzleId)}/play`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify({
+          playerName: profile.name || 'Pemain TTS',
+          playerAvatar: profile.avatar || '🦊',
+          playerId: profile.id || null,
+          playerEmail: profile.email || null,
+        }),
       });
       if (!res.ok) return null;
       const json = await res.json();
@@ -158,10 +164,14 @@ export const CloudService = {
         try {
           sessionStorage.setItem(key, '1');
         } catch { /* ignore */ }
+        try {
+          // @ts-ignore
+          if (typeof memoryCache !== 'undefined' && memoryCache?.clear) memoryCache.clear();
+        } catch { /* ignore */ }
         return typeof json.playsCount === 'number' ? json.playsCount : null;
       }
     } catch {
-      // silent — non-critical analytics
+      // silent
     }
     return null;
   },

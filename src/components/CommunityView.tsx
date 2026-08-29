@@ -823,6 +823,22 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
                     <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
                       {puzzle.clues.length} Soal ({puzzle.clues.filter((c) => c.direction === 'across').length}M, {puzzle.clues.filter((c) => c.direction === 'down').length}D)
                     </span>
+                    <span className="text-slate-300 dark:text-slate-600">·</span>
+                    <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 tabular-nums">
+                      {Number(puzzle.playsCount) || 0} plays
+                    </span>
+                    {puzzle.lastPlayerName ? (
+                      <>
+                        <span className="text-slate-300 dark:text-slate-600">·</span>
+                        <span
+                          className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-500 dark:text-slate-400 truncate max-w-[140px]"
+                          title={`Terakhir dimainkan oleh ${puzzle.lastPlayerName}`}
+                        >
+                          <span className="text-xs leading-none">{puzzle.lastPlayerAvatar || '🎮'}</span>
+                          <span className="truncate">{puzzle.lastPlayerName}</span>
+                        </span>
+                      </>
+                    ) : null}
                   </div>
 
                   {/* Code Tag & Status Badges */}

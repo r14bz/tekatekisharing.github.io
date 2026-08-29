@@ -66,6 +66,11 @@ export interface CrosswordPuzzle {
   category?: string;
   playsCount?: number;
   completionsCount?: number;
+  /** Pemain terakhir yang membuka / memainkan TTS */
+  lastPlayerName?: string;
+  lastPlayerAvatar?: string;
+  lastPlayerId?: string;
+  lastPlayedAt?: number;
   reactions?: PuzzleReactions;
   comments?: PuzzleComment[];
 }

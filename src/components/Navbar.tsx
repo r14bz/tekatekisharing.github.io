@@ -104,7 +104,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             />
             <span className="text-xs">{userProfile.avatar || '🦊'}</span>
             <span className="text-[11px] font-bold max-w-[70px] sm:max-w-[120px] truncate">
-              {userProfile.isLoggedIn ? (userProfile.name || 'Akun Saya') : 'Login'}
+              {userProfile.isLoggedIn ? 'Profile' : 'Login'}
             </span>
           </button>
 

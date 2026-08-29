@@ -329,11 +329,18 @@ export async function fetchPuzzlesFromSupabase(): Promise<any[] | null> {
           title: row.title || row.data.title,
           authorName: row.author_name || row.authorName || row.data.authorName,
           authorId: row.author_id || row.authorId || row.data.authorId,
+          authorAvatar: row.author_avatar || row.authorAvatar || row.data.authorAvatar || "🦊",
           createdAt: Number(row.created_at || row.createdAt || row.data.createdAt) || Date.now(),
           updatedAt: Number(row.updated_at || row.updatedAt || row.data.updatedAt) || Date.now(),
           reactions: row.reactions || row.data.reactions,
           userReactions: row.user_reactions || row.userReactions || row.data.userReactions,
           comments: row.comments || row.data.comments || [],
+          playsCount: Number(row.plays_count ?? row.playsCount ?? row.data.playsCount ?? 0) || 0,
+          completionsCount: Number(row.completions_count ?? row.completionsCount ?? row.data.completionsCount ?? 0) || 0,
+          lastPlayerName: row.data.lastPlayerName || row.last_player_name || null,
+          lastPlayerAvatar: row.data.lastPlayerAvatar || row.last_player_avatar || null,
+          lastPlayerId: row.data.lastPlayerId || row.last_player_id || null,
+          lastPlayedAt: Number(row.data.lastPlayedAt || row.last_played_at || 0) || null,
         };
       }
       return {
@@ -373,6 +380,18 @@ export async function upsertPuzzleToSupabase(puzzle: any): Promise<boolean> {
 
   try {
     // Payload lengkap sesuai schema ideal
+    // data JSONB menyimpan field dinamis (playsCount, lastPlayer*, dll)
+    // agar tetap hidup meski kolom flat tidak ada di schema
+    const dataBlob = {
+      ...(puzzle && typeof puzzle === "object" ? puzzle : {}),
+      playsCount: Number(puzzle.playsCount) || 0,
+      completionsCount: Number(puzzle.completionsCount) || 0,
+      lastPlayerName: puzzle.lastPlayerName || null,
+      lastPlayerAvatar: puzzle.lastPlayerAvatar || null,
+      lastPlayerId: puzzle.lastPlayerId || null,
+      lastPlayedAt: puzzle.lastPlayedAt || null,
+    };
+
     const payload: Record<string, any> = {
       id: String(puzzle.id),
       title: puzzle.title || "Teka Teki Silang",
@@ -392,6 +411,7 @@ export async function upsertPuzzleToSupabase(puzzle: any): Promise<boolean> {
       is_featured: Boolean(puzzle.isFeatured),
       created_at: Number(puzzle.createdAt) || Date.now(),
       updated_at: Number(puzzle.updatedAt) || Date.now(),
+      data: dataBlob,
     };
 
     // Coba upsert; jika kolom tidak ada di schema, buang kolom itu dan coba lagi
@@ -424,6 +444,7 @@ export async function upsertPuzzleToSupabase(puzzle: any): Promise<boolean> {
         is_draft: attempt.is_draft,
         created_at: attempt.created_at,
         updated_at: attempt.updated_at,
+        data: attempt.data || dataBlob,
       };
       const { error: coreErr } = await client.from("puzzles").upsert(core, { onConflict: "id" });
       if (coreErr) {
