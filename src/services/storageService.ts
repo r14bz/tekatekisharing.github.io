@@ -846,7 +846,7 @@ export const StorageService = {
   getColorAccent(): string {
     try {
       const saved = localStorage.getItem(COLOR_ACCENT_KEY);
-      const allowed = ['indigo', 'violet', 'ocean', 'emerald', 'rose', 'amber', 'slate'];
+      const allowed = ['indigo', 'violet', 'fuchsia', 'ocean', 'sky', 'teal', 'emerald', 'lime', 'amber', 'sunset', 'rose', 'coral', 'midnight', 'slate'];
       if (saved && allowed.includes(saved)) return saved;
     } catch {
       // ignore
@@ -855,7 +855,7 @@ export const StorageService = {
   },
 
   setColorAccent(accent: string): void {
-    const allowed = ['indigo', 'violet', 'ocean', 'emerald', 'rose', 'amber', 'slate'];
+    const allowed = ['indigo', 'violet', 'fuchsia', 'ocean', 'sky', 'teal', 'emerald', 'lime', 'amber', 'sunset', 'rose', 'coral', 'midnight', 'slate'];
     const value = allowed.includes(accent) ? accent : 'indigo';
     try {
       localStorage.setItem(COLOR_ACCENT_KEY, value);
