@@ -54,10 +54,32 @@ export function invalidateMemoryCache(...keys: string[]) {
 export const CloudService = {
 
   /**
-   * Fetches all published puzzles from the cloud database with Self-Healing Resilience
+   * Fetches all published puzzles from the cloud database.
+   * Cloud (API/Supabase) is the source of truth when reachable —
+   * local cache is only used as offline fallback so deleted TTS
+   * do not reappear in the community tab.
    */
   async getCommunityPuzzles(): Promise<CrosswordPuzzle[]> {
     const cacheKey = 'community-puzzles';
+    const cached = getCache<CrosswordPuzzle[]>(cacheKey);
+    if (cached) return cached;
+
+    // Offline / fallback seed (only used if cloud fetch fails)
+    const buildLocalFallback = (): CrosswordPuzzle[] => {
+      const map = new Map<string, CrosswordPuzzle>();
+      StorageService.getCommunityPuzzlesCache().forEach((p) => {
+        if (p && !p.isDraft) map.set(p.id, p);
+      });
+      StorageService.getMyPuzzles().forEach((p) => {
+        if (p && !p.isDraft) map.set(p.id, p);
+      });
+      StorageService.getSavedPuzzles().forEach((p) => {
+        if (p && !p.isDraft) map.set(p.id, p);
+      });
+      return Array.from(map.values()).sort(
+        (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
+      );
+    };
 
     try {
       const res = await fetch(`${API_BASE}/puzzles`, {
@@ -68,37 +90,53 @@ export const CloudService = {
         if (contentType.includes('application/json')) {
           const json = await res.json();
           if (json.success && Array.isArray(json.data)) {
-            // Server = sumber kebenaran (sudah filter TTS yang dihapus)
-            const list = json.data.filter((cp: CrosswordPuzzle) => cp && !cp.isDraft);
-            StorageService.saveCommunityPuzzlesCache(list);
-            setCache(cacheKey, list, DEFAULT_TTL);
-            return list;
+            // Source of truth: ONLY what the cloud returns (non-draft)
+            const cloudList: CrosswordPuzzle[] = json.data
+              .filter((cp: CrosswordPuzzle) => cp && !cp.isDraft)
+              .sort(
+                (a: CrosswordPuzzle, b: CrosswordPuzzle) =>
+                  (b.createdAt || 0) - (a.createdAt || 0)
+              );
+
+            // Overwrite community cache so deleted puzzles disappear
+            StorageService.saveCommunityPuzzlesCache(cloudList);
+
+            // Prune local "my puzzles" that no longer exist on cloud
+            // (owner deleted elsewhere / admin deleted)
+            try {
+              const cloudIds = new Set(cloudList.map((p) => p.id));
+              const myList = StorageService.getMyPuzzles();
+              const stillMine = myList.filter((p) => cloudIds.has(p.id));
+              // Re-save only those still on cloud (deleteMyPuzzle side-effects avoided for batch)
+              if (stillMine.length !== myList.length) {
+                const raw = stillMine;
+                localStorage.setItem('tts_sharing_my_puzzles', JSON.stringify(raw));
+              }
+            } catch {
+              // ignore storage errors
+            }
+
+            // NOTE: intentionally NO auto-reseed / batch-sync here.
+            // Re-uploading "missing" local puzzles would revive deleted TTS.
+
+            setCache(cacheKey, cloudList, DEFAULT_TTL);
+            return cloudList;
           }
         }
       }
     } catch (err) {
-      console.warn('Error fetching community puzzles from cloud:', err);
+      console.warn('Could not fetch from cloud database, using local cache:', err);
     }
 
-    // Fallback offline: cache lokal
-    const cached = getCache<CrosswordPuzzle[]>(cacheKey);
-    if (cached) return cached.filter((p) => p && !p.isDraft);
-
-    const map = new Map<string, CrosswordPuzzle>();
-    StorageService.getCommunityPuzzlesCache().forEach((p) => {
-      if (p && !p.isDraft) map.set(p.id, p);
-    });
-    StorageService.getMyPuzzles().forEach((p) => {
-      if (p && !p.isDraft) map.set(p.id, p);
-    });
-    StorageService.getSavedPuzzles().forEach((p) => {
-      if (p && !p.isDraft) map.set(p.id, p);
-    });
-    return Array.from(map.values()).sort(
-      (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
-    );
+    const fallback = buildLocalFallback();
+    if (fallback.length > 0) {
+      StorageService.saveCommunityPuzzlesCache(fallback);
+    }
+    setCache(cacheKey, fallback, DEFAULT_TTL);
+    return fallback;
   },
 
+  /**
    * Publishes a crossword puzzle to the shared cloud database
    */
   async publishPuzzle(puzzle: CrosswordPuzzle): Promise<{ success: boolean; data?: CrosswordPuzzle; message?: string }> {
@@ -159,16 +197,18 @@ export const CloudService = {
   },
 
   /**
-   * Deletes a puzzle from cloud database
+   * Deletes a puzzle from cloud database and clears local community traces
    */
   async deletePuzzle(id: string): Promise<{ success: boolean; message?: string }> {
     invalidateCache('community-puzzles', `puzzle:${id}`, `comments:${id}`, `leaderboard:${id}`);
-    // Hapus lokal dulu agar batch-sync tidak menghidupkan lagi
+    // Optimistic local cleanup so community tab updates immediately
     try {
       StorageService.deleteMyPuzzle(id);
-      try { StorageService.deleteSavedPuzzle(id); } catch {}
+      StorageService.deleteSavedPuzzle(id);
+      const community = StorageService.getCommunityPuzzlesCache().filter((p) => p.id !== id);
+      StorageService.saveCommunityPuzzlesCache(community);
     } catch {
-      /* ignore */
+      // ignore
     }
     try {
       const profile = StorageService.getUserProfile();
@@ -181,7 +221,7 @@ export const CloudService = {
         },
       });
       const json = await res.json();
-      return { success: Boolean(json.success), message: json.message };
+      return { success: json.success, message: json.message };
     } catch (err) {
       console.error('Error deleting puzzle from cloud:', err);
       return { success: false, message: 'Gagal menghubungi server cloud.' };

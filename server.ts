@@ -177,20 +177,6 @@ function writeJsonFile(filePath: string, data: any, immediate = false): void {
 
 // In-memory cache synced with disk with automatic backup restore
 let puzzlesCache: any[] = readJsonFile(PUZZLES_FILE, []);
-
-const DELETED_PUZZLES_FILE = path.join(DATA_DIR, "deleted_puzzles.json");
-let deletedPuzzleIds: Set<string> = new Set(
-  (readJsonFile(DELETED_PUZZLES_FILE, []) as string[]).filter(Boolean)
-);
-function markPuzzleDeleted(id: string) {
-  if (!id) return;
-  deletedPuzzleIds.add(String(id));
-  writeJsonFile(DELETED_PUZZLES_FILE, Array.from(deletedPuzzleIds));
-}
-function isPuzzleDeleted(id: string) {
-  return deletedPuzzleIds.has(String(id));
-}
-
 if (puzzlesCache.length === 0) {
   const backupPuzzles = readJsonFile(PUZZLES_BACKUP_FILE, []);
   if (backupPuzzles.length > 0) {
@@ -335,17 +321,29 @@ async function initSupabaseData() {
 
     console.log("[Supabase] Terhubung ke Supabase. Memulai sinkronisasi data...");
 
-    // 1. Sync Puzzles — Supabase sumber kebenaran; jangan resurrect yang sudah dihapus
+    // 1. Sync Puzzles — Supabase is source of truth when fetch succeeds
     const sbPuzzles = await fetchPuzzlesFromSupabase();
-    if (sbPuzzles !== null) {
-      const fromSb = (sbPuzzles || [])
-        .filter((p: any) => p && p.id && !isPuzzleDeleted(p.id))
-        .map((p: any) => normalizePuzzle(p));
-      puzzlesCache = fromSb.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    if (sbPuzzles !== null && sbPuzzles.length > 0) {
+      // REPLACE (do not merge) so deleted TTS disappear from server cache
+      puzzlesCache = sbPuzzles
+        .map((p) => normalizePuzzle(p))
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       writeJsonFile(PUZZLES_FILE, puzzlesCache);
       writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
-      console.log(`[Supabase] Berhasil memuat ${fromSb.length} teka-teki dari Supabase.`);
-      // Jangan bulk-upload cache lokal ke SB (bisa menghidupkan TTS yang sudah dihapus)
+      console.log(`[Supabase] Berhasil memuat ${sbPuzzles.length} teka-teki dari Supabase (replace cache).`);
+    } else if (sbPuzzles !== null && sbPuzzles.length === 0 && puzzlesCache.length > 0) {
+      // Tabel Supabase masih kosong: seed sekali dari cache lokal
+      console.log(`[Supabase] Mengunggah ${puzzlesCache.length} teka-teki lokal ke tabel Supabase...`);
+      for (const p of puzzlesCache) {
+        await upsertPuzzleToSupabase(p);
+      }
+    } else if (sbPuzzles === null) {
+      console.log(`[Supabase] Fetch puzzles gagal; memakai cache lokal (${puzzlesCache.length}).`);
+    } else {
+      // sb empty and local empty
+      puzzlesCache = [];
+      writeJsonFile(PUZZLES_FILE, puzzlesCache);
+      writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
     }
 
     // 2. Sync User Accounts
@@ -546,28 +544,23 @@ CREATE TABLE IF NOT EXISTS profiles (
 
 
 // GET all published community puzzles (shared across all users)
-// Always try Supabase first so every Vercel instance returns fresh data (Realtime-friendly)
+// Supabase is the source of truth when available (so deletes stick)
 app.get("/api/puzzles", async (req, res) => {
   try {
     const sbPuzzles = await fetchPuzzlesFromSupabase();
     if (sbPuzzles !== null) {
-      // Supabase = sumber kebenaran (termasuk daftar kosong setelah hapus massal)
+      // REPLACE local cache — do not merge with stale /tmp entries
       puzzlesCache = sbPuzzles
-        .filter((p: any) => p && p.id && !isPuzzleDeleted(p.id) && !p.isDeleted)
-        .map((p: any) => normalizePuzzle(p))
+        .map((p) => normalizePuzzle(p))
         .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       writeJsonFile(PUZZLES_FILE, puzzlesCache);
-      writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
-    } else {
-      puzzlesCache = puzzlesCache.filter((p) => p && p.id && !isPuzzleDeleted(p.id));
     }
   } catch (err) {
     console.warn("[API] /puzzles Supabase refresh note:", err);
-    puzzlesCache = puzzlesCache.filter((p) => p && p.id && !isPuzzleDeleted(p.id));
   }
 
-  const sorted = puzzlesCache
-    .filter((p) => !p.isDraft && !isPuzzleDeleted(p.id))
+  const sorted = [...puzzlesCache]
+    .filter((p) => p && !p.isDraft)
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   res.json({
     success: true,
@@ -580,9 +573,8 @@ app.get("/api/puzzles/:query", async (req, res) => {
   try {
     const sbPuzzles = await fetchPuzzlesFromSupabase();
     if (sbPuzzles !== null) {
-      puzzlesCache = sbPuzzles
-        .filter((p: any) => p && p.id && !isPuzzleDeleted(p.id) && !p.isDeleted)
-        .map((p: any) => normalizePuzzle(p));
+      // REPLACE so a deleted puzzle is not still served from stale cache
+      puzzlesCache = sbPuzzles.map((p) => normalizePuzzle(p));
       writeJsonFile(PUZZLES_FILE, puzzlesCache);
     }
   } catch (err) {
@@ -592,10 +584,8 @@ app.get("/api/puzzles/:query", async (req, res) => {
   const query = req.params.query.trim().toLowerCase();
   const found = puzzlesCache.find(
     (p) =>
-      p &&
-      !isPuzzleDeleted(p.id) &&
-      ((p.id && p.id.toLowerCase() === query) ||
-        (p.customCode && p.customCode.toLowerCase() === query))
+      (p.id && p.id.toLowerCase() === query) ||
+      (p.customCode && p.customCode.toLowerCase() === query)
   );
 
   if (found) {
@@ -674,48 +664,45 @@ app.post("/api/puzzles", (req, res) => {
   }
 });
 
-// POST /api/puzzles/batch-sync: Restores and merges client-published puzzles to the cloud
+// POST /api/puzzles/batch-sync: update existing puzzles only (NO insert of "missing" local copies).
+// Inserting arbitrary client puzzles revived deleted TTS; publish must go through POST /api/puzzles.
 app.post("/api/puzzles/batch-sync", (req, res) => {
   try {
     const { puzzles } = req.body;
     if (!Array.isArray(puzzles) || puzzles.length === 0) {
-      return res.json({ success: true, count: puzzlesCache.length });
+      return res.json({ success: true, count: puzzlesCache.length, addedCount: 0, updatedCount: 0 });
     }
 
-    let addedCount = 0;
+    let updatedCount = 0;
     puzzles.forEach((p) => {
       if (p && p.id && p.title && !p.isDraft) {
-        // Jangan hidupkan lagi TTS yang sudah dihapus
-        if (isPuzzleDeleted(p.id)) return;
         const idx = puzzlesCache.findIndex((x) => x.id === p.id);
-        const norm = normalizePuzzle(p);
         if (idx === -1) {
-          puzzlesCache.unshift(norm);
-          addedCount++;
-        } else {
-          // Preserve server reactions and comments
-          puzzlesCache[idx] = {
-            ...p,
-            ...puzzlesCache[idx],
-            reactions: puzzlesCache[idx].reactions || p.reactions,
-            userReactions: puzzlesCache[idx].userReactions || p.userReactions || {},
-            comments: puzzlesCache[idx].comments || p.comments || [],
-          };
+          // Do NOT re-insert puzzles that are absent from server/Supabase (may have been deleted)
+          return;
         }
-        upsertPuzzleToSupabase(puzzlesCache[idx] || norm).catch(() => {});
+        // Preserve server reactions and comments; refresh content from client
+        puzzlesCache[idx] = {
+          ...normalizePuzzle(p),
+          reactions: puzzlesCache[idx].reactions || p.reactions,
+          userReactions: puzzlesCache[idx].userReactions || p.userReactions || {},
+          comments: puzzlesCache[idx].comments || p.comments || [],
+        };
+        updatedCount++;
+        upsertPuzzleToSupabase(puzzlesCache[idx]).catch(() => {});
       }
     });
 
-    if (addedCount > 0) {
+    if (updatedCount > 0) {
       writeJsonFile(PUZZLES_FILE, puzzlesCache);
       writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
     }
 
     res.json({
       success: true,
-      addedCount,
+      addedCount: 0,
+      updatedCount,
       totalCount: puzzlesCache.length,
-      data: puzzlesCache,
     });
   } catch (err) {
     console.error("Error batch syncing puzzles:", err);
@@ -918,10 +905,30 @@ app.delete("/api/puzzles/:id/comments/:commentId", (req, res) => {
 app.delete("/api/puzzles/:id", async (req, res) => {
   try {
     const id = req.params.id;
-    const puzzle = puzzlesCache.find((p) => p.id === id);
-    
+    let puzzle = puzzlesCache.find((p) => p.id === id);
+
+    // If not in memory cache, still allow delete from Supabase (stale instance)
     if (!puzzle) {
-      return res.status(404).json({ success: false, message: "Teka-teki tidak ditemukan." });
+      try {
+        const sbPuzzles = await fetchPuzzlesFromSupabase();
+        if (sbPuzzles) {
+          puzzle = sbPuzzles.find((p: any) => p.id === id) || null;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    if (!puzzle) {
+      // Ensure Supabase row is gone even if caches differ across Vercel instances
+      await deletePuzzleFromSupabase(id).catch(() => {});
+      puzzlesCache = puzzlesCache.filter((p) => p.id !== id);
+      writeJsonFile(PUZZLES_FILE, puzzlesCache);
+      if (leaderboardsCache[id]) {
+        delete leaderboardsCache[id];
+        writeJsonFile(LEADERBOARDS_FILE, leaderboardsCache);
+      }
+      return res.json({ success: true, message: "Teka-teki dihapus dari cloud database (jika ada)." });
     }
 
     // Security Check: Only the original creator can delete their puzzle
@@ -937,23 +944,16 @@ app.delete("/api/puzzles/:id", async (req, res) => {
 
     puzzlesCache = puzzlesCache.filter((p) => p.id !== id);
     writeJsonFile(PUZZLES_FILE, puzzlesCache);
-    markPuzzleDeleted(id);
+    writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
 
-    const delOk = await deletePuzzleFromSupabase(id);
-    if (!delOk) {
-      console.warn("[delete] Supabase delete gagal untuk", id);
-    }
+    await deletePuzzleFromSupabase(id).catch(() => {});
 
     if (leaderboardsCache[id]) {
       delete leaderboardsCache[id];
       writeJsonFile(LEADERBOARDS_FILE, leaderboardsCache);
     }
 
-    res.json({
-      success: true,
-      message: "Teka-teki dan peringkat terkait berhasil dihapus dari cloud database.",
-      deletedFromSupabase: delOk,
-    });
+    res.json({ success: true, message: "Teka-teki dan peringkat terkait berhasil dihapus dari cloud database." });
   } catch (error) {
     res.status(500).json({ success: false, message: "Gagal menghapus teka-teki." });
   }
@@ -2040,25 +2040,24 @@ app.put("/api/admin/puzzles/:id", requireAdminAuth, (req, res) => {
 app.delete("/api/admin/puzzles/:id", requireAdminAuth, async (req, res) => {
   const pId = req.params.id;
   const idx = puzzlesCache.findIndex((p) => p.id === pId);
-  if (idx === -1) {
-    return res.status(404).json({ success: false, message: "Teka-teki tidak ditemukan." });
-  }
+  const deletedTitle =
+    idx >= 0 ? puzzlesCache[idx].title : pId;
 
-  const deleted = puzzlesCache.splice(idx, 1)[0];
+  if (idx >= 0) {
+    puzzlesCache.splice(idx, 1);
+  }
   delete leaderboardsCache[pId];
-  markPuzzleDeleted(pId);
 
   writeJsonFile(PUZZLES_FILE, puzzlesCache);
   writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
   writeJsonFile(LEADERBOARDS_FILE, leaderboardsCache);
 
-  const delOk = await deletePuzzleFromSupabase(pId);
-  if (!delOk) console.warn("[admin-delete] Supabase delete gagal", pId);
+  // Always remove from Supabase so other Vercel instances stop serving it
+  await deletePuzzleFromSupabase(pId).catch(() => {});
 
   res.json({
     success: true,
-    message: `Teka-teki "${deleted.title}" berhasil dihapus secara permanen.`,
-    deletedFromSupabase: delOk,
+    message: `Teka-teki "${deletedTitle}" berhasil dihapus secara permanen.`,
   });
 });
 
