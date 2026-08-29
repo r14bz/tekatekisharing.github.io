@@ -300,6 +300,8 @@ function normalizePuzzle(p: any): any {
     },
     userReactions: p.userReactions || {},
     comments: Array.isArray(p.comments) ? p.comments : [],
+    playsCount: Number(p.playsCount ?? p.plays_count ?? 0) || 0,
+    completionsCount: Number(p.completionsCount ?? p.completions_count ?? 0) || 0,
   };
 }
 
@@ -713,6 +715,58 @@ app.post("/api/puzzles/batch-sync", (req, res) => {
 
 // POST reaction to a crossword puzzle (like, laugh, love, think, fire, sad)
 // Requirement: Only logged-in users and properly accumulated per user
+
+// POST /api/puzzles/:id/play — increment playsCount (public, rate-light via client session)
+app.post("/api/puzzles/:id/play", async (req, res) => {
+  try {
+    const { id } = req.params;
+    let puzzle = puzzlesCache.find((p) => p.id === id);
+    if (!puzzle) {
+      // Refresh from Supabase once
+      try {
+        const sbPuzzles = await fetchPuzzlesFromSupabase();
+        if (sbPuzzles && sbPuzzles.length > 0) {
+          const map = new Map<string, any>();
+          sbPuzzles.map((p) => normalizePuzzle(p)).forEach((p) => map.set(p.id, p));
+          puzzlesCache.forEach((p) => {
+            if (!map.has(p.id)) map.set(p.id, normalizePuzzle(p));
+          });
+          puzzlesCache = Array.from(map.values());
+          writeJsonFile(PUZZLES_FILE, puzzlesCache);
+          puzzle = puzzlesCache.find((p) => p.id === id);
+        }
+      } catch {
+        // ignore
+      }
+    }
+    if (!puzzle) {
+      return res.status(404).json({ success: false, message: "Teka-teki tidak ditemukan." });
+    }
+
+    puzzle.playsCount = (Number(puzzle.playsCount) || 0) + 1;
+    puzzle.updatedAt = Date.now();
+
+    const idx = puzzlesCache.findIndex((p) => p.id === id);
+    if (idx >= 0) puzzlesCache[idx] = puzzle;
+    writeJsonFile(PUZZLES_FILE, puzzlesCache);
+    writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
+
+    upsertPuzzleToSupabase(puzzle).catch((err) => {
+      console.warn("[play] Upsert Supabase gagal:", err);
+    });
+
+    res.json({
+      success: true,
+      playsCount: puzzle.playsCount,
+      message: "Play tercatat.",
+    });
+  } catch (error) {
+    console.error("Error recording play:", error);
+    res.status(500).json({ success: false, message: "Gagal mencatat play." });
+  }
+});
+
+
 app.post("/api/puzzles/:id/react", async (req, res) => {
   try {
     const { id } = req.params;

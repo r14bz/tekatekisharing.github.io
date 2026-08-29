@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { CrosswordPuzzle, UserProfile, GlobalAnnouncement } from './types/tts';
 import { StorageService } from './services/storageService';
 import { SyncService } from './services/syncService';
+import { CloudService } from './services/cloudService';
 import { AdminService } from './services/adminService';
 import { Navbar, ActiveNavTab } from './components/Navbar';
 import { PlayerView } from './components/PlayerView';
@@ -186,9 +187,20 @@ export default function App() {
       setIsSyncModalOpen(true);
       return;
     }
+    // Tutup profil kreator agar PlayerView bisa tampil (!viewingCreator)
+    if (viewingCreator) {
+      setViewingCreator(null);
+      try {
+        if ((window.location.hash || '').startsWith('#creator/')) {
+          window.history.replaceState({}, '', window.location.pathname + window.location.search);
+        }
+      } catch { /* ignore */ }
+    }
     setCurrentPlayingPuzzle(puzzle);
     StorageService.setActivePuzzleId(puzzle.id);
     setActiveTab('play');
+    // Catat hitungan main ke server/Supabase (sekali per sesi per puzzle)
+    void CloudService.recordPuzzlePlay(puzzle.id);
   };
 
   const handleCreateNew = () => {
@@ -210,9 +222,11 @@ export default function App() {
   };
 
   const handleSaveAndPlay = (puzzle: CrosswordPuzzle) => {
+    setViewingCreator(null);
     setCurrentPlayingPuzzle(puzzle);
     StorageService.setActivePuzzleId(puzzle.id);
     setActiveTab('play');
+    void CloudService.recordPuzzlePlay(puzzle.id);
   };
 
   const handleOpenShareModal = (puzzle: CrosswordPuzzle) => {

@@ -51,8 +51,10 @@ function formatNumber(n: number): string {
 export const FooterStats: React.FC = () => {
   const [stats, setStats] = useState<PresenceStats>({ totalVisits: 0, online: 1 });
   const [colorAccent, setColorAccent] = useState<string>(() => StorageService.getColorAccent());
-  const [installPrompt, setInstallPrompt] = useState<any>(null);
+  const [canNativeInstall, setCanNativeInstall] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
+  const [showInstallHelp, setShowInstallHelp] = useState(false);
+  const installPromptRef = useRef<any>(null);
   const clientIdRef = useRef<string>('');
 
   const handleSelectAccent = (id: string) => {
@@ -68,19 +70,38 @@ export const FooterStats: React.FC = () => {
 
     const onBip = (e: Event) => {
       e.preventDefault();
-      setInstallPrompt(e);
+      installPromptRef.current = e;
+      setCanNativeInstall(true);
     };
     window.addEventListener('beforeinstallprompt', onBip);
-    return () => window.removeEventListener('beforeinstallprompt', onBip);
+
+    const onInstalled = () => {
+      installPromptRef.current = null;
+      setCanNativeInstall(false);
+      setIsStandalone(true);
+      setShowInstallHelp(false);
+    };
+    window.addEventListener('appinstalled', onInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onBip);
+      window.removeEventListener('appinstalled', onInstalled);
+    };
   }, []);
 
   const handleInstallApp = async () => {
-    if (!installPrompt) return;
-    installPrompt.prompt();
-    try {
-      await installPrompt.userChoice;
-    } catch { /* ignore */ }
-    setInstallPrompt(null);
+    const promptEvent = installPromptRef.current;
+    if (promptEvent && typeof promptEvent.prompt === 'function') {
+      try {
+        promptEvent.prompt();
+        await promptEvent.userChoice;
+      } catch { /* user dismissed */ }
+      installPromptRef.current = null;
+      setCanNativeInstall(false);
+      return;
+    }
+    // Browser belum memberikan native prompt (umum di iOS / Firefox) → tampilkan panduan
+    setShowInstallHelp((v) => !v);
   };
 
   useEffect(() => {
@@ -183,25 +204,42 @@ export const FooterStats: React.FC = () => {
             aria-label="Pilih warna tema"
           >
             {!isStandalone && (
-              <button
-                type="button"
-                id="btn-install-pwa"
-                onClick={handleInstallApp}
-                disabled={!installPrompt}
-                title={
-                  installPrompt
-                    ? 'Pasang aplikasi ke layar utama'
-                    : 'Di iOS: Bagikan → Add to Home Screen. Di Android/Chrome: menu browser → Install app.'
-                }
-                className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold border transition-all mr-1 ${
-                  installPrompt
-                    ? 'bg-indigo-50 dark:bg-indigo-950/50 border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 cursor-pointer'
-                    : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 text-slate-400 cursor-default'
-                }`}
-              >
-                <Download className="w-3 h-3" />
-                Install
-              </button>
+              <div className="relative mr-1">
+                <button
+                  type="button"
+                  id="btn-install-pwa"
+                  onClick={handleInstallApp}
+                  title="Pasang ke layar utama"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold border transition-all bg-indigo-50 dark:bg-indigo-950/50 border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 cursor-pointer active:scale-95"
+                >
+                  <Download className="w-3 h-3" />
+                  Install
+                  {canNativeInstall && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  )}
+                </button>
+                {showInstallHelp && (
+                  <div
+                    className="absolute bottom-full right-0 mb-2 w-64 z-50 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg p-3 text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed"
+                    role="dialog"
+                  >
+                    <p className="font-bold text-slate-800 dark:text-slate-100 mb-1.5">Pasang ke layar utama</p>
+                    <p className="mb-1">
+                      <strong>Android / Chrome:</strong> menu ⋮ → <em>Install app</em> / <em>Add to Home screen</em>
+                    </p>
+                    <p className="mb-2">
+                      <strong>iPhone / Safari:</strong> tombol Bagikan → <em>Add to Home Screen</em>
+                    </p>
+                    <button
+                      type="button"
+                      className="text-indigo-600 dark:text-indigo-400 font-bold cursor-pointer"
+                      onClick={() => setShowInstallHelp(false)}
+                    >
+                      Tutup
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
             <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500 mr-0.5">
               <Palette className="w-3 h-3" />

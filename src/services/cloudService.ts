@@ -137,6 +137,37 @@ export const CloudService = {
   },
 
   /**
+   * Catat 1x play per puzzle per tab session.
+   * Menghindari spam double-click; server menaikkan playsCount.
+   */
+  async recordPuzzlePlay(puzzleId: string): Promise<number | null> {
+    if (!puzzleId) return null;
+    try {
+      const key = `tts_play_counted_${puzzleId}`;
+      if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(key)) {
+        return null; // sudah dihitung sesi ini
+      }
+      const res = await fetch(`/api/puzzles/${encodeURIComponent(puzzleId)}/play`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) return null;
+      const json = await res.json();
+      if (json?.success) {
+        try {
+          sessionStorage.setItem(key, '1');
+        } catch { /* ignore */ }
+        return typeof json.playsCount === 'number' ? json.playsCount : null;
+      }
+    } catch {
+      // silent — non-critical analytics
+    }
+    return null;
+  },
+
+
+  /**
    * Publishes a crossword puzzle to the shared cloud database
    */
   async publishPuzzle(puzzle: CrosswordPuzzle): Promise<{ success: boolean; data?: CrosswordPuzzle; message?: string }> {

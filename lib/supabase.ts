@@ -355,6 +355,8 @@ export async function fetchPuzzlesFromSupabase(): Promise<any[] | null> {
         comments: row.comments || [],
         isDraft: Boolean(row.is_draft ?? row.isDraft),
         isFeatured: Boolean(row.is_featured ?? row.isFeatured),
+        playsCount: Number(row.plays_count ?? row.playsCount ?? (row.data && row.data.playsCount) ?? 0) || 0,
+        completionsCount: Number(row.completions_count ?? row.completionsCount ?? (row.data && row.data.completionsCount) ?? 0) || 0,
       };
     });
 
