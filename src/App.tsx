@@ -7,6 +7,7 @@ import { Navbar, ActiveNavTab } from './components/Navbar';
 import { PlayerView } from './components/PlayerView';
 import { CreatorView } from './components/CreatorView';
 import { CommunityView } from './components/CommunityView';
+import { CreatorProfileView } from './components/CreatorProfileView';
 import { LeaderboardView } from './components/LeaderboardView';
 import { AdminView } from './components/AdminView';
 import { ShareModal } from './components/ShareModal';
@@ -26,6 +27,12 @@ export default function App() {
   const [editingPuzzle, setEditingPuzzle] = useState<CrosswordPuzzle | null>(null);
   const [announcement, setAnnouncement] = useState<GlobalAnnouncement | null>(null);
   const [dismissedAnnouncement, setDismissedAnnouncement] = useState<boolean>(false);
+  const [viewingCreator, setViewingCreator] = useState<{
+    id?: string;
+    name: string;
+    avatar?: string;
+    email?: string;
+  } | null>(null);
 
   // Fetch active announcement banner
   useEffect(() => {
@@ -34,6 +41,26 @@ export default function App() {
         setAnnouncement(ann);
       }
     });
+  }, []);
+
+
+  // Public creator profile via URL: #creator/<authorId|name>
+  useEffect(() => {
+    const parseCreatorHash = () => {
+      const hash = (window.location.hash || '').replace(/^#/, '');
+      if (!hash.startsWith('creator/')) return;
+      const key = decodeURIComponent(hash.slice('creator/'.length)).trim();
+      if (!key) return;
+      // Prefer id-like keys; name used as fallback label
+      const looksLikeId = key.startsWith('u_') || key.length > 20 || key.includes('-');
+      setViewingCreator({
+        id: looksLikeId ? key : undefined,
+        name: looksLikeId ? 'Kreator' : key,
+      });
+    };
+    parseCreatorHash();
+    window.addEventListener('hashchange', parseCreatorHash);
+    return () => window.removeEventListener('hashchange', parseCreatorHash);
   }, []);
 
   // Supabase Realtime: invalidasi cache + minta UI refetch saat data berubah
@@ -248,7 +275,7 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 w-full max-w-6xl mx-auto flex flex-col">
-        {activeTab === 'admin' && (
+        {!viewingCreator && activeTab === 'admin' && (
           <AdminView
             onBackToApp={() => {
               clearAdminSecretFromUrl();
@@ -259,7 +286,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'play' && currentPlayingPuzzle && (
+        {!viewingCreator && activeTab === 'play' && currentPlayingPuzzle && (
           <PlayerView
             puzzle={currentPlayingPuzzle}
             userProfile={userProfile}
@@ -272,7 +299,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'create' && (
+        {!viewingCreator && activeTab === 'create' && (
           <CreatorView
             userProfile={userProfile}
             initialPuzzle={editingPuzzle}
@@ -283,7 +310,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'library' && (
+        {!viewingCreator && activeTab === 'library' && (
           <CommunityView
             key={`community-view-${communityInitialTab}`}
             userProfile={userProfile}
@@ -294,10 +321,11 @@ export default function App() {
             onOpenShareModal={handleOpenShareModal}
             onOpenLeaderboardForPuzzle={handleOpenLeaderboardForPuzzle}
             onOpenSyncModal={() => setIsSyncModalOpen(true)}
+            onOpenCreatorProfile={(c) => setViewingCreator(c)}
           />
         )}
 
-        {activeTab === 'leaderboard' && (
+        {!viewingCreator && activeTab === 'leaderboard' && (
           <LeaderboardView
             currentPuzzle={currentPlayingPuzzle}
             onPlayPuzzle={handlePlayPuzzle}
@@ -306,6 +334,26 @@ export default function App() {
       </main>
 
       {/* Footer Statistik Pengguna di Bagian Paling Bawah */}
+      {viewingCreator && (
+        <main className="flex-1 w-full">
+          <CreatorProfileView
+            creator={viewingCreator}
+            userProfile={userProfile}
+            onBack={() => {
+              setViewingCreator(null);
+              try {
+                if ((window.location.hash || '').startsWith('#creator/')) {
+                  window.history.replaceState({}, '', window.location.pathname + window.location.search);
+                }
+              } catch { /* ignore */ }
+            }}
+            onPlayPuzzle={handlePlayPuzzle}
+            onSharePuzzle={(p) => setShareModalPuzzle(p)}
+            onOpenSyncModal={() => setIsSyncModalOpen(true)}
+          />
+        </main>
+      )}
+
       <FooterStats />
 
       {/* Share Modal */}

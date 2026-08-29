@@ -48,6 +48,12 @@ interface CommunityViewProps {
   onOpenLeaderboardForPuzzle: (puzzle: CrosswordPuzzle) => void;
   initialTab?: 'community' | 'my' | 'drafts';
   onOpenSyncModal?: () => void;
+  onOpenCreatorProfile?: (creator: {
+    id?: string;
+    name: string;
+    avatar?: string;
+    email?: string;
+  }) => void;
 }
 
 // Color palette themes for cards to make them vibrant and visually distinct
@@ -113,6 +119,7 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
   onOpenLeaderboardForPuzzle,
   initialTab = 'community',
   onOpenSyncModal,
+  onOpenCreatorProfile,
 }) => {
   const [activeTab, setActiveTab] = useState<'community' | 'my' | 'drafts'>(initialTab);
 
@@ -788,12 +795,30 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
 
                   {/* Creator Info & Clues count */}
                   <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-3 leading-normal">
-                    <span className={`w-5 h-5 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-xs ring-1 ${theme.avatarRing} shrink-0`}>
-                      {puzzle.authorAvatar || '🦊'}
-                    </span>
-                    <span className="text-slate-800 dark:text-slate-200 font-semibold truncate max-w-[120px] sm:max-w-[150px]">
-                      {puzzle.authorName}
-                    </span>
+                    <button
+                      type="button"
+                      id={`btn-open-creator-${puzzle.id}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (onOpenCreatorProfile) {
+                          onOpenCreatorProfile({
+                            id: puzzle.authorId,
+                            name: puzzle.authorName || 'Kreator',
+                            avatar: puzzle.authorAvatar,
+                            email: puzzle.authorEmail,
+                          });
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 max-w-[180px] sm:max-w-[220px] rounded-full px-1.5 py-0.5 -mx-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer text-left"
+                      title={`Lihat profil ${puzzle.authorName}`}
+                    >
+                      <span className={`w-5 h-5 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-xs ring-1 ${theme.avatarRing} shrink-0`}>
+                        {puzzle.authorAvatar || '🦊'}
+                      </span>
+                      <span className="text-slate-800 dark:text-slate-200 font-semibold truncate hover:text-indigo-600 dark:hover:text-indigo-400">
+                        {puzzle.authorName}
+                      </span>
+                    </button>
                     <span>•</span>
                     <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
                       {puzzle.clues.length} Soal ({puzzle.clues.filter((c) => c.direction === 'across').length}M, {puzzle.clues.filter((c) => c.direction === 'down').length}D)
