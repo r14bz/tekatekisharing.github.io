@@ -801,12 +801,28 @@ export async function upsertUserAccountToSupabase(account: any): Promise<boolean
       last_synced_at: Number(account.lastSyncedAt) || Date.now(),
     };
 
-    const { error } = await client.from("user_accounts").upsert(payload, { onConflict: "id" });
-    if (error) {
-      console.warn("[Supabase] Upsert user account error:", error.message);
+    let attempt: Record<string, any> = { ...payload };
+    for (let i = 0; i < 10; i++) {
+      const { error } = await client.from("user_accounts").upsert(attempt, { onConflict: "id" });
+      if (!error) {
+        // Index by email unique if needed
+        return true;
+      }
+      const msg = error.message || "";
+      console.warn("[Supabase] Upsert user account error:", msg);
+      const m = msg.match(/Could not find the '([^']+)' column/i);
+      if (m && m[1] && m[1] in attempt) {
+        delete attempt[m[1]];
+        continue;
+      }
+      // Coba onConflict email jika id gagal unique
+      if (/duplicate|unique/i.test(msg) && attempt.email) {
+        const { error: e2 } = await client.from("user_accounts").upsert(attempt, { onConflict: "email" });
+        if (!e2) return true;
+      }
       return false;
     }
-    return true;
+    return false;
   } catch (err) {
     console.error("[Supabase] Upsert user account exception:", err);
     return false;

@@ -1608,7 +1608,22 @@ app.post("/api/auth/google", async (req, res) => {
 });
 
 // 2. Email & Password Registration
-app.post("/api/auth/register-email", (req, res) => {
+
+/** Pastikan cache akun terisi dari Supabase (sumber kebenaran lintas browser / instance Vercel). */
+async function ensureUserAccountsFromSupabase(force = false): Promise<void> {
+  try {
+    const sbAccounts = await fetchUserAccountsFromSupabase();
+    if (sbAccounts && typeof sbAccounts === "object") {
+      // Merge: Supabase menang untuk key yang sama
+      userAccountsCache = { ...userAccountsCache, ...sbAccounts };
+      writeJsonFile(USER_ACCOUNTS_FILE, userAccountsCache);
+    }
+  } catch (err) {
+    console.warn("[auth] Gagal refresh user_accounts dari Supabase:", err);
+  }
+}
+
+app.post("/api/auth/register-email", async (req, res) => {
   try {
     const { email, password, name, avatar, currentProfile, currentPuzzles, currentDrafts, currentProgress } = req.body;
 
@@ -1621,9 +1636,12 @@ app.post("/api/auth/register-email", (req, res) => {
     }
 
     const cleanEmail = email.trim().toLowerCase();
+
+    // Selalu cek Supabase dulu (cache /tmp Vercel tidak bisa diandalkan antar browser)
+    await ensureUserAccountsFromSupabase();
     const existing = userAccountsCache[cleanEmail];
 
-    if (existing) {
+    if (existing && existing.passwordHash) {
       return res.status(409).json({
         success: false,
         isExistingEmail: true,
@@ -1634,34 +1652,42 @@ app.post("/api/auth/register-email", (req, res) => {
     const { salt, hash } = hashPassword(password);
     const authToken = generateAuthToken();
     const syncKey = "SYNC-" + Math.random().toString(36).substring(2, 8).toUpperCase();
-    const id = "usr_" + Math.random().toString(36).substring(2, 10);
+    const id = (existing && existing.id) || ("usr_" + Math.random().toString(36).substring(2, 10));
 
     const account = {
       id,
       email: cleanEmail,
-      name: name?.trim() || cleanEmail.split("@")[0] || "Pemain TTS",
-      avatar: avatar || "🦊",
+      name: name?.trim() || (existing && existing.name) || cleanEmail.split("@")[0] || "Pemain TTS",
+      avatar: avatar || (existing && existing.avatar) || "🦊",
       passwordSalt: salt,
       passwordHash: hash,
       authToken,
       provider: "email",
-      syncKey,
+      syncKey: (existing && existing.syncKey) || syncKey,
       isLoggedIn: true,
       autoSyncEnabled: true,
-      createdAt: Date.now(),
+      createdAt: (existing && existing.createdAt) || Date.now(),
       lastSyncedAt: Date.now(),
-      totalSolved: (currentProfile && currentProfile.totalSolved) || 0,
-      totalCreated: (currentProfile && currentProfile.totalCreated) || 0,
-      puzzles: Array.isArray(currentPuzzles) ? currentPuzzles : [],
-      drafts: Array.isArray(currentDrafts) ? currentDrafts : [],
-      progress: currentProgress || {},
+      totalSolved: (currentProfile && currentProfile.totalSolved) || (existing && existing.totalSolved) || 0,
+      totalCreated: (currentProfile && currentProfile.totalCreated) || (existing && existing.totalCreated) || 0,
+      puzzles: Array.isArray(currentPuzzles) ? currentPuzzles : (existing && existing.puzzles) || [],
+      drafts: Array.isArray(currentDrafts) ? currentDrafts : (existing && existing.drafts) || [],
+      progress: currentProgress || (existing && existing.progress) || {},
     };
 
     userAccountsCache[cleanEmail] = account;
     userAccountsCache[id] = account;
-    writeJsonFile(USER_ACCOUNTS_FILE, userAccountsCache);
+    writeJsonFile(USER_ACCOUNTS_FILE, userAccountsCache, true);
 
-    upsertUserAccountToSupabase(account).catch(() => {});
+    // WAJIB await — tanpa ini akun hilang di instance Vercel berikutnya
+    const persisted = await upsertUserAccountToSupabase(account);
+    if (!persisted) {
+      console.error("[auth/register] Gagal menyimpan akun ke Supabase:", cleanEmail);
+      return res.status(503).json({
+        success: false,
+        message: "Gagal menyimpan akun ke database cloud. Coba lagi beberapa saat.",
+      });
+    }
 
     res.json({
       success: true,
@@ -1692,7 +1718,7 @@ app.post("/api/auth/register-email", (req, res) => {
 });
 
 // 3. Email & Password Login
-app.post("/api/auth/login-email", (req, res) => {
+app.post("/api/auth/login-email", async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -1708,8 +1734,11 @@ app.post("/api/auth/login-email", (req, res) => {
       });
     }
 
-    const cleanEmail = email.trim().toLowerCase();
-    const account = userAccountsCache[cleanEmail];
+        const cleanEmail = email.trim().toLowerCase();
+
+    // Selalu refresh dari Supabase agar login lintas browser / device berhasil
+    await ensureUserAccountsFromSupabase();
+    let account = userAccountsCache[cleanEmail];
 
     if (!account) {
       return res.status(404).json({
@@ -1724,8 +1753,9 @@ app.post("/api/auth/login-email", (req, res) => {
       return res.status(401).json({
         success: false,
         errorType: "wrong_password",
-        message: "Email terdaftar, namun kata sandi yang Anda masukkan salah. Silakan periksa kembali huruf besar/kecil dan kombinasi kata sandi Anda.",
+        message: "Kata sandi salah. Silakan coba lagi.",
       });
+    }
     }
 
     // Successful login -> issue new authToken
@@ -1736,9 +1766,10 @@ app.post("/api/auth/login-email", (req, res) => {
 
     userAccountsCache[cleanEmail] = account;
     userAccountsCache[account.id] = account;
-    writeJsonFile(USER_ACCOUNTS_FILE, userAccountsCache);
+    writeJsonFile(USER_ACCOUNTS_FILE, userAccountsCache, true);
 
-    upsertUserAccountToSupabase(account).catch(() => {});
+    // Persist token/session ke Supabase agar instance lain mengenali sesi
+    await upsertUserAccountToSupabase(account);
 
     res.json({
       success: true,
