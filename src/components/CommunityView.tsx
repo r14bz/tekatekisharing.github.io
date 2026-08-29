@@ -396,86 +396,6 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
         </div>
       </div>
 
-      {/* 🏷️ INPUT KODE TEKA-TEKI FORM (Clean, Colorful & Focused) */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-4 sm:p-5 shadow-sm mb-6 transition-all hover:border-indigo-200 dark:hover:border-indigo-900">
-        <div className="flex items-center justify-between gap-2 mb-3">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-indigo-100 dark:bg-indigo-950/70 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
-              <Tag className="w-4 h-4" />
-            </div>
-            <div>
-              <h2 className="text-sm sm:text-base font-black text-slate-800 dark:text-white tracking-tight flex items-center gap-2">
-                <span>Punya Kode Teka-Teki Silang?</span>
-                {!userProfile.isLoggedIn && (
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800 flex items-center gap-1">
-                    <Lock className="w-2.5 h-2.5" /> Khusus Akun Terdaftar
-                  </span>
-                )}
-              </h2>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                {userProfile.isLoggedIn
-                  ? 'Ketik kode TTS unik dari teman untuk langsung membuka dan memainkannya'
-                  : 'Masuk ke akun Anda untuk memasukkan kode TTS kustom dan memainkan teka-teki bersama teman'}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Code Form (accepts custom code or share code) */}
-        {userProfile.isLoggedIn ? (
-          <form onSubmit={handleImportCode} className="flex flex-col sm:flex-row gap-2">
-            <div className="relative flex-1">
-              <Tag className="w-4 h-4 text-indigo-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                id="input-import-puzzle-code"
-                value={importCodeInput}
-                onChange={(e) => setImportCodeInput(e.target.value)}
-                placeholder="Contoh kode: TTS-KUIS, SEJARAH-01, atau tempel tautan..."
-                className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-700 focus:border-indigo-500 focus:bg-white dark:focus:bg-slate-900 rounded-xl pl-10 pr-4 py-2.5 text-xs sm:text-sm text-slate-800 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 dark:focus:ring-indigo-950 font-mono font-semibold tracking-wide transition-all"
-              />
-            </div>
-            <button
-              type="submit"
-              id="btn-submit-import-code"
-              className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-sm hover:shadow-indigo-500/20 active:scale-95 cursor-pointer shrink-0"
-            >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              <span>Buka & Mainkan</span>
-            </button>
-          </form>
-        ) : (
-          <div
-            onClick={onOpenSyncModal}
-            className="flex flex-col sm:flex-row items-center justify-between gap-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-dashed border-slate-300 dark:border-slate-700 cursor-pointer hover:bg-indigo-50/50 dark:hover:bg-indigo-950/30 hover:border-indigo-300 dark:hover:border-indigo-700 transition-all group"
-          >
-            <div className="flex items-center gap-2.5 text-xs text-slate-600 dark:text-slate-300">
-              <Lock className="w-4 h-4 text-amber-500 shrink-0" />
-              <span className="font-medium">
-                Fitur memasukkan kode TTS hanya dapat digunakan oleh pengguna yang sudah <strong>Login</strong>.
-              </span>
-            </div>
-            <button
-              type="button"
-              id="btn-login-to-import-code"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (onOpenSyncModal) onOpenSyncModal();
-              }}
-              className="w-full sm:w-auto px-4 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer shrink-0"
-            >
-              <LogIn className="w-3.5 h-3.5" />
-              <span>Login untuk Buka TTS</span>
-            </button>
-          </div>
-        )}
-        {importError && (
-          <p className="text-rose-600 dark:text-rose-400 text-xs mt-2.5 font-medium bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 px-3 py-1.5 rounded-xl">
-            {importError}
-          </p>
-        )}
-      </div>
-
       {/* 🧭 MAIN TABS NAVIGATION (Komunitas, TTS Saya, Draf) */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-5 border-b border-slate-200 dark:border-slate-800 pb-3">
         <div className="flex flex-wrap gap-1.5 sm:gap-2">
@@ -1058,6 +978,86 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
           })}
         </div>
       )}
+
+      {/* 🏷️ INPUT KODE TEKA-TEKI FORM (Clean, Colorful & Focused) */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-4 sm:p-5 shadow-sm mt-6 mb-2 transition-all hover:border-indigo-200 dark:hover:border-indigo-900">
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-indigo-100 dark:bg-indigo-950/70 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+              <Tag className="w-4 h-4" />
+            </div>
+            <div>
+              <h2 className="text-sm sm:text-base font-black text-slate-800 dark:text-white tracking-tight flex items-center gap-2">
+                <span>Punya Kode Teka-Teki Silang?</span>
+                {!userProfile.isLoggedIn && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800 flex items-center gap-1">
+                    <Lock className="w-2.5 h-2.5" /> Khusus Akun Terdaftar
+                  </span>
+                )}
+              </h2>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                {userProfile.isLoggedIn
+                  ? 'Ketik kode TTS unik dari teman untuk langsung membuka dan memainkannya'
+                  : 'Masuk ke akun Anda untuk memasukkan kode TTS kustom dan memainkan teka-teki bersama teman'}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Code Form (accepts custom code or share code) */}
+        {userProfile.isLoggedIn ? (
+          <form onSubmit={handleImportCode} className="flex flex-col sm:flex-row gap-2">
+            <div className="relative flex-1">
+              <Tag className="w-4 h-4 text-indigo-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                id="input-import-puzzle-code"
+                value={importCodeInput}
+                onChange={(e) => setImportCodeInput(e.target.value)}
+                placeholder="Contoh kode: TTS-KUIS, SEJARAH-01, atau tempel tautan..."
+                className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-700 focus:border-indigo-500 focus:bg-white dark:focus:bg-slate-900 rounded-xl pl-10 pr-4 py-2.5 text-xs sm:text-sm text-slate-800 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 dark:focus:ring-indigo-950 font-mono font-semibold tracking-wide transition-all"
+              />
+            </div>
+            <button
+              type="submit"
+              id="btn-submit-import-code"
+              className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-sm hover:shadow-indigo-500/20 active:scale-95 cursor-pointer shrink-0"
+            >
+              <Play className="w-3.5 h-3.5 fill-current" />
+              <span>Buka & Mainkan</span>
+            </button>
+          </form>
+        ) : (
+          <div
+            onClick={onOpenSyncModal}
+            className="flex flex-col sm:flex-row items-center justify-between gap-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-dashed border-slate-300 dark:border-slate-700 cursor-pointer hover:bg-indigo-50/50 dark:hover:bg-indigo-950/30 hover:border-indigo-300 dark:hover:border-indigo-700 transition-all group"
+          >
+            <div className="flex items-center gap-2.5 text-xs text-slate-600 dark:text-slate-300">
+              <Lock className="w-4 h-4 text-amber-500 shrink-0" />
+              <span className="font-medium">
+                Fitur memasukkan kode TTS hanya dapat digunakan oleh pengguna yang sudah <strong>Login</strong>.
+              </span>
+            </div>
+            <button
+              type="button"
+              id="btn-login-to-import-code"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onOpenSyncModal) onOpenSyncModal();
+              }}
+              className="w-full sm:w-auto px-4 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer shrink-0"
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              <span>Login untuk Buka TTS</span>
+            </button>
+          </div>
+        )}
+        {importError && (
+          <p className="text-rose-600 dark:text-rose-400 text-xs mt-2.5 font-medium bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 px-3 py-1.5 rounded-xl">
+            {importError}
+          </p>
+        )}
+      </div>
 
       {/* Delete Confirmation Modal */}
       {puzzleToDelete && (

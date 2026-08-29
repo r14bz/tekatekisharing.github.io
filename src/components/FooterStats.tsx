@@ -59,13 +59,29 @@ export const FooterStats: React.FC = () => {
   const [canNativeInstall, setCanNativeInstall] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
   const [showInstallHelp, setShowInstallHelp] = useState(false);
+  const [showThemeMenu, setShowThemeMenu] = useState(false);
+  const themeMenuRef = useRef<HTMLDivElement>(null);
   const installPromptRef = useRef<any>(null);
   const clientIdRef = useRef<string>('');
+
+  const activeTheme = COLOR_THEMES.find((t) => t.id === colorAccent) || COLOR_THEMES[0];
 
   const handleSelectAccent = (id: string) => {
     setColorAccent(id);
     StorageService.setColorAccent(id);
+    setShowThemeMenu(false);
   };
+
+  useEffect(() => {
+    if (!showThemeMenu) return;
+    const onDoc = (e: MouseEvent) => {
+      if (themeMenuRef.current && !themeMenuRef.current.contains(e.target as Node)) {
+        setShowThemeMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [showThemeMenu]);
 
   useEffect(() => {
     const standalone =
@@ -101,7 +117,7 @@ export const FooterStats: React.FC = () => {
         promptEvent.prompt();
         await promptEvent.userChoice;
       } catch {
-        /* user dismissed */
+        /* dismissed */
       }
       installPromptRef.current = null;
       setCanNativeInstall(false);
@@ -127,9 +143,7 @@ export const FooterStats: React.FC = () => {
         if (!res.ok) return;
         const json = await res.json();
         if (!cancelled && json?.success) {
-          setStats({
-            online: Math.max(1, Number(json.online) || 1),
-          });
+          setStats({ online: Math.max(1, Number(json.online) || 1) });
         }
       } catch {
         // silent
@@ -150,9 +164,7 @@ export const FooterStats: React.FC = () => {
     const interval = setInterval(() => sendHeartbeat(false), 20000);
 
     const onVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        sendHeartbeat(false);
-      }
+      if (document.visibilityState === 'visible') sendHeartbeat(false);
     };
     document.addEventListener('visibilitychange', onVisibility);
 
@@ -166,15 +178,13 @@ export const FooterStats: React.FC = () => {
   return (
     <footer className="w-full bg-white/80 dark:bg-slate-900/80 backdrop-blur-md text-slate-600 dark:text-slate-400 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] border-t border-slate-200 dark:border-slate-800/80 mt-16 transition-colors duration-200 text-xs">
       <div className="max-w-6xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
-        {/* Brand */}
         <div className="flex items-center gap-2 font-medium text-slate-700 dark:text-slate-300">
           <span>Teka Teki Sharing</span>
           <span className="text-slate-300 dark:text-slate-700">•</span>
           <span className="text-slate-500">Share Your Puzzle!</span>
         </div>
 
-        {/* Install PWA + Online */}
-        <div className="relative flex items-center gap-3 bg-slate-100/80 dark:bg-slate-800/50 px-3 py-1.5 rounded-full border border-slate-200/60 dark:border-slate-700/40 shadow-sm">
+        <div className="relative flex flex-wrap items-center justify-center gap-2 sm:gap-3 bg-slate-100/80 dark:bg-slate-800/50 px-2.5 py-1.5 rounded-2xl border border-slate-200/60 dark:border-slate-700/40 shadow-sm">
           {!isStandalone ? (
             <button
               type="button"
@@ -184,7 +194,7 @@ export const FooterStats: React.FC = () => {
               className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border transition-all bg-indigo-50 dark:bg-indigo-950/50 border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 cursor-pointer active:scale-95"
             >
               <Download className="w-3.5 h-3.5" />
-              Install App
+              Install
               {canNativeInstall && (
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
               )}
@@ -192,14 +202,14 @@ export const FooterStats: React.FC = () => {
           ) : (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300">
               <Check className="w-3.5 h-3.5" />
-              App terpasang
+              Terpasang
             </span>
           )}
 
-          <div className="w-px h-3 bg-slate-300 dark:bg-slate-700" />
+          <div className="w-px h-3 bg-slate-300 dark:bg-slate-700 hidden sm:block" />
 
           <div
-            className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium pr-1"
+            className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium px-1"
             title="Pengguna yang sedang membuka situs"
           >
             <Activity className="w-3.5 h-3.5 animate-pulse" />
@@ -209,6 +219,77 @@ export const FooterStats: React.FC = () => {
               </strong>{' '}
               Online
             </span>
+          </div>
+
+          <div className="w-px h-3 bg-slate-300 dark:bg-slate-700 hidden sm:block" />
+
+          <div className="relative" ref={themeMenuRef}>
+            <button
+              type="button"
+              id="btn-theme-dropdown"
+              onClick={() => setShowThemeMenu((v) => !v)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+              aria-haspopup="listbox"
+              aria-expanded={showThemeMenu}
+              title="Pilih warna tema"
+            >
+              <span
+                className="w-3.5 h-3.5 rounded-full border border-white/80 shadow-sm shrink-0"
+                style={{ background: activeTheme.swatch }}
+              />
+              <Palette className="w-3 h-3 text-slate-400" />
+              <span className="max-w-[4.5rem] truncate">{activeTheme.label}</span>
+              <svg
+                className={`w-3 h-3 text-slate-400 transition-transform ${showThemeMenu ? 'rotate-180' : ''}`}
+                viewBox="0 0 12 12"
+                fill="none"
+                aria-hidden
+              >
+                <path
+                  d="M3 4.5L6 7.5L9 4.5"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+
+            {showThemeMenu && (
+              <div
+                className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 w-52 max-h-64 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-1.5"
+                role="listbox"
+                aria-label="Daftar warna tema"
+              >
+                {COLOR_THEMES.map((t) => {
+                  const active = colorAccent === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      id={`btn-color-theme-${t.id}`}
+                      role="option"
+                      aria-selected={active}
+                      onClick={() => handleSelectAccent(t.id)}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 text-left text-[12px] font-semibold transition-colors cursor-pointer ${
+                        active
+                          ? 'bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300'
+                          : 'text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      <span
+                        className="w-4 h-4 rounded-full border border-slate-200 dark:border-slate-600 shadow-sm shrink-0"
+                        style={{ background: t.swatch }}
+                      />
+                      <span className="flex-1">{t.label}</span>
+                      {active && (
+                        <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" strokeWidth={2.5} />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {showInstallHelp && !isStandalone && (
@@ -234,51 +315,8 @@ export const FooterStats: React.FC = () => {
           )}
         </div>
 
-        {/* Color theme picker + copyright */}
-        <div className="flex flex-col items-center sm:items-end gap-2">
-          <div
-            className="flex items-center gap-1.5 flex-wrap justify-center sm:justify-end max-w-[280px] sm:max-w-[340px]"
-            role="group"
-            aria-label="Pilih warna tema"
-          >
-            <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500 mr-0.5">
-              <Palette className="w-3 h-3" />
-              Tema
-            </span>
-            {COLOR_THEMES.map((t) => {
-              const active = colorAccent === t.id;
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  id={`btn-color-theme-${t.id}`}
-                  onClick={() => handleSelectAccent(t.id)}
-                  title={t.label}
-                  aria-label={`Tema ${t.label}`}
-                  aria-pressed={active}
-                  className={`relative w-5 h-5 sm:w-6 sm:h-6 rounded-full border-2 transition-all cursor-pointer shadow-sm hover:scale-110 active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-slate-400 dark:focus-visible:ring-slate-500 ${
-                    active
-                      ? 'border-white dark:border-slate-900 ring-2 scale-110'
-                      : 'border-white/80 dark:border-slate-700/80 opacity-90 hover:opacity-100'
-                  }`}
-                  style={{
-                    background: t.swatch,
-                    ...(active ? { boxShadow: `0 0 0 2px ${t.ring}` } : {}),
-                  }}
-                >
-                  {active && (
-                    <Check
-                      className="absolute inset-0 m-auto w-2.5 h-2.5 sm:w-3 sm:h-3 text-white drop-shadow"
-                      strokeWidth={3}
-                    />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-          <div className="text-slate-400 dark:text-slate-500 text-center sm:text-right">
-            &copy; {new Date().getFullYear()} Teka Teki Sharing
-          </div>
+        <div className="text-slate-400 dark:text-slate-500 text-center sm:text-right">
+          &copy; {new Date().getFullYear()} Teka Teki Sharing
         </div>
       </div>
     </footer>
