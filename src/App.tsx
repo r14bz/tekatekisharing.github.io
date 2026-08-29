@@ -68,6 +68,61 @@ export default function App() {
     document.documentElement.setAttribute('data-accent', accent);
   }, []);
 
+  /**
+   * Admin panel is NOT linked in the public UI.
+   * Open only via secret URL (bookmark this privately):
+   *   https://your-domain/#tts-admin
+   *   https://your-domain/?tts_admin=1
+   */
+  const openAdminFromSecretUrl = () => {
+    setActiveTab('admin');
+  };
+
+  const clearAdminSecretFromUrl = () => {
+    try {
+      const url = new URL(window.location.href);
+      let changed = false;
+      if (url.searchParams.has('tts_admin')) {
+        url.searchParams.delete('tts_admin');
+        changed = true;
+      }
+      const hash = url.hash.replace(/^#/, '').toLowerCase();
+      if (hash === 'tts-admin' || hash === 'tts-admin/') {
+        url.hash = '';
+        changed = true;
+      }
+      if (changed) {
+        window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const isAdminSecretUrl = (): boolean => {
+    try {
+      const hash = window.location.hash.replace(/^#/, '').toLowerCase();
+      if (hash === 'tts-admin' || hash === 'tts-admin/') return true;
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('tts_admin') === '1') return true;
+    } catch {
+      // ignore
+    }
+    return false;
+  };
+
+  // Open admin when secret hash/query is present (load + hashchange)
+  useEffect(() => {
+    const check = () => {
+      if (isAdminSecretUrl()) {
+        openAdminFromSecretUrl();
+      }
+    };
+    check();
+    window.addEventListener('hashchange', check);
+    return () => window.removeEventListener('hashchange', check);
+  }, []);
+
   const handleToggleTheme = () => {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
   };
@@ -186,7 +241,10 @@ export default function App() {
       <main className="flex-1 w-full max-w-6xl mx-auto flex flex-col">
         {activeTab === 'admin' && (
           <AdminView
-            onBackToApp={() => setActiveTab('library')}
+            onBackToApp={() => {
+              clearAdminSecretFromUrl();
+              setActiveTab('library');
+            }}
             onPlayPuzzle={handlePlayPuzzle}
             userProfile={userProfile}
           />
@@ -239,7 +297,7 @@ export default function App() {
       </main>
 
       {/* Footer Statistik Pengguna di Bagian Paling Bawah */}
-      <FooterStats onOpenAdmin={() => setActiveTab('admin')} />
+      <FooterStats />
 
       {/* Share Modal */}
       {shareModalPuzzle && (

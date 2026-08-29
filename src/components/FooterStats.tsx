@@ -1,10 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Eye, Activity, ShieldCheck, Palette, Check } from 'lucide-react';
+import { Eye, Activity, Palette, Check } from 'lucide-react';
 import { StorageService } from '../services/storageService';
-
-interface FooterStatsProps {
-  onOpenAdmin?: () => void;
-}
 
 interface PresenceStats {
   totalVisits: number;
@@ -52,7 +48,7 @@ function formatNumber(n: number): string {
   return n.toLocaleString('id-ID');
 }
 
-export const FooterStats: React.FC<FooterStatsProps> = ({ onOpenAdmin }) => {
+export const FooterStats: React.FC = () => {
   const [stats, setStats] = useState<PresenceStats>({ totalVisits: 0, online: 1 });
   const [colorAccent, setColorAccent] = useState<string>(() => StorageService.getColorAccent());
   const clientIdRef = useRef<string>('');
@@ -124,21 +120,7 @@ export const FooterStats: React.FC<FooterStatsProps> = ({ onOpenAdmin }) => {
         <div className="flex items-center gap-2 font-medium text-slate-700 dark:text-slate-300">
           <span>Teka Teki Sharing</span>
           <span className="text-slate-300 dark:text-slate-700">•</span>
-          <span className="text-slate-500">Share Your Puzzle!</span>
-          {onOpenAdmin && (
-            <>
-              <span className="text-slate-300 dark:text-slate-700">•</span>
-              <button
-                type="button"
-                onClick={onOpenAdmin}
-                className="hover:text-indigo-600 dark:hover:text-indigo-400 font-semibold flex items-center gap-1 transition-colors cursor-pointer"
-              >
-                <ShieldCheck className="w-3 h-3 text-indigo-500" />
-                <span>Admin</span>
-              </button>
-            </>
-          )}
-        </div>
+          <span className="text-slate-500">Share Your Puzzle!</span></div>
 
         {/* Statistik realtime */}
         <div className="flex items-center gap-5 bg-slate-100/80 dark:bg-slate-800/50 px-4 py-1.5 rounded-full border border-slate-200/60 dark:border-slate-700/40 shadow-sm">
