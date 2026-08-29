@@ -466,7 +466,10 @@ export async function fetchLeaderboardsFromSupabase(): Promise<Record<string, an
   if (!client) return null;
 
   try {
-    const { data, error } = await client.from("leaderboard").select("*");
+    const { data, error } = await client
+      .from("leaderboard")
+      .select("*")
+      .order("time_ms", { ascending: true });
 
     if (error) {
       console.warn("[Supabase] Leaderboard fetch note:", error.message);
@@ -474,29 +477,36 @@ export async function fetchLeaderboardsFromSupabase(): Promise<Record<string, an
     }
 
     const map: Record<string, any[]> = {};
-    (data || []).forEach((row) => {
-      const pId = row.puzzle_id || row.puzzleId || row.data?.puzzleId;
+    (data || []).forEach((row: any) => {
+      const pId = row.puzzle_id || row.puzzleId;
       if (!pId) return;
 
       if (!map[pId]) map[pId] = [];
-      const entry = {
-        id: row.id || row.data?.id || "lead_" + Math.random().toString(36).substring(2, 9),
+      const timeMs =
+        Number(row.time_ms ?? row.completion_time ?? row.timeMs ?? 0) || 0;
+      map[pId].push({
+        id: row.id || "lead_" + Math.random().toString(36).substring(2, 9),
         puzzleId: pId,
-        playerName: row.player_name || row.playerName || row.player || row.name || row.data?.playerName || "Pemain TTS",
-        playerAvatar: row.player_avatar || row.playerAvatar || row.avatar || row.data?.playerAvatar || "🦊",
-        playerId: row.player_id || row.playerId || row.data?.playerId || null,
-        playerEmail: row.player_email || row.playerEmail || row.email || row.data?.playerEmail || null,
-        timeMs: Number(row.time_ms ?? row.completion_time ?? row.timeMs ?? row.time ?? row.duration ?? row.duration_ms ?? row.data?.timeMs) || 0,
-        score: Number(row.score ?? row.data?.score) || 1000,
-        formattedTime: row.formatted_time || row.formattedTime || row.data?.formattedTime || null,
-        completedAt: Number(row.completed_at ?? row.completedAt ?? row.created_at ?? row.data?.completedAt) || Date.now(),
-      };
-
-      map[pId].push(entry);
+        playerName: row.player_name || row.playerName || "Pemain TTS",
+        playerAvatar: row.player_avatar || row.playerAvatar || "🦊",
+        playerId: row.player_id || row.playerId || null,
+        playerEmail: row.player_email || row.playerEmail || null,
+        timeMs,
+        score: Number(row.score) || 1000,
+        formattedTime: row.formatted_time || row.formattedTime || null,
+        completedAt:
+          Number(row.completed_at ?? row.completedAt ?? row.created_at) ||
+          Date.now(),
+      });
     });
 
     Object.keys(map).forEach((pId) => {
-      map[pId].sort((a, b) => (a.timeMs || 0) - (b.timeMs || 0));
+      map[pId].sort((a, b) => {
+        const ta = a.timeMs > 0 ? a.timeMs : Number.MAX_SAFE_INTEGER;
+        const tb = b.timeMs > 0 ? b.timeMs : Number.MAX_SAFE_INTEGER;
+        if (ta !== tb) return ta - tb;
+        return (b.score || 0) - (a.score || 0);
+      });
     });
 
     return map;
@@ -506,93 +516,137 @@ export async function fetchLeaderboardsFromSupabase(): Promise<Record<string, an
   }
 }
 
+/**
+ * Insert/upsert one leaderboard row into public.leaderboard
+ * Matches production schema (completion_time NOT NULL, score NOT NULL, FK puzzle_id).
+ */
 export async function insertLeaderboardEntryToSupabase(
   puzzleId: string,
   entry: any
 ): Promise<{ ok: boolean; error?: string }> {
   const client = getSupabase();
   if (!client) {
-    return { ok: false, error: "Supabase client null (cek SUPABASE_URL + SERVICE_ROLE_KEY di Vercel)" };
+    return {
+      ok: false,
+      error: "Supabase client null (cek SUPABASE_URL + SERVICE_ROLE_KEY di Vercel)",
+    };
   }
   if (!puzzleId || !entry) {
     return { ok: false, error: "puzzleId/entry kosong" };
   }
 
-  const entryId = String(entry.id || "lead_" + Math.random().toString(36).substring(2, 9));
-  const timeMs = Math.max(1, Number(entry.timeMs) || 0);
-  const score = Math.max(0, Number(entry.score) || 1000);
-  const completedAt = Number(entry.completedAt) || Date.now();
+  const entryId = String(
+    entry.id || "lead_" + Math.random().toString(36).substring(2, 11)
+  );
+  const timeMs = Math.max(1, Math.floor(Number(entry.timeMs) || 0));
+  const score = Math.max(0, Math.floor(Number(entry.score) || 1000));
+  const completedAt = Math.floor(Number(entry.completedAt) || Date.now());
   const playerName = String(entry.playerName || "Pemain TTS").slice(0, 120);
 
-  let payload: Record<string, any> = {
+  // Verify parent puzzle exists (FK constraint leaderboard_puzzle_id_fkey)
+  try {
+    const { data: parent, error: parentErr } = await client
+      .from("puzzles")
+      .select("id")
+      .eq("id", String(puzzleId))
+      .maybeSingle();
+    if (parentErr) {
+      console.warn("[Supabase] Puzzle FK check note:", parentErr.message);
+    }
+    if (!parent) {
+      return {
+        ok: false,
+        error:
+          "puzzle_id tidak ada di tabel puzzles (FK). Publikasikan TTS ke cloud dulu sebelum skor leaderboard.",
+      };
+    }
+  } catch (e: any) {
+    console.warn("[Supabase] Puzzle FK check exception:", e?.message);
+  }
+
+  const payload: Record<string, any> = {
     id: entryId,
     puzzle_id: String(puzzleId),
     player_name: playerName,
     player_avatar: entry.playerAvatar || "🦊",
     player_id: entry.playerId || null,
     player_email: entry.playerEmail || null,
-    time_ms: timeMs,
     completion_time: timeMs,
-    duration_ms: timeMs,
+    time_ms: timeMs,
     score,
     formatted_time: entry.formattedTime || null,
     completed_at: completedAt,
     created_at: completedAt,
   };
 
-  const table = "leaderboard";
-  let lastError = "";
-
-  for (let i = 0; i < 12; i++) {
-    const up = await client.from(table).upsert(payload, { onConflict: "id" });
-    if (!up.error) {
-      console.log("[Supabase] Leaderboard upsert OK:", entryId, "time=", timeMs);
-      return { ok: true };
-    }
-    lastError = up.error.message || String(up.error);
-    console.warn("[Supabase] Leaderboard upsert attempt:", lastError);
-
-    if (/duplicate|unique/i.test(lastError)) {
-      return { ok: true };
-    }
-
-    const mCol = lastError.match(/Could not find the '([^']+)' column/i);
-    if (mCol && mCol[1] && mCol[1] in payload) {
-      delete payload[mCol[1]];
-      continue;
-    }
-
-    const mNull = lastError.match(/null value in column "([^"]+)"/i);
-    if (mNull && mNull[1]) {
-      const col = mNull[1];
-      if (col === "completion_time" || col === "time_ms" || col === "duration_ms" || col === "time") {
-        payload[col] = timeMs;
-      } else if (col === "completed_at" || col === "created_at") {
-        payload[col] = completedAt;
-      } else if (col === "score") {
-        payload[col] = score;
-      } else if (col === "player_name" || col === "name") {
-        payload[col] = playerName;
-      } else if (col === "puzzle_id") {
-        payload[col] = String(puzzleId);
-      } else {
-        payload[col] = payload.time_ms || payload.score || playerName || completedAt || "";
-      }
-      continue;
-    }
-
-    break;
+  const up = await client.from("leaderboard").upsert(payload, { onConflict: "id" });
+  if (!up.error) {
+    console.log("[Supabase] Leaderboard upsert OK:", entryId, "time=", timeMs);
+    return { ok: true };
   }
 
-  const ins = await client.from(table).insert(payload);
+  let lastError = up.error.message || String(up.error);
+  console.warn("[Supabase] Leaderboard upsert error:", lastError);
+
+  if (/Could not find the '/i.test(lastError)) {
+    const slim = {
+      id: entryId,
+      puzzle_id: String(puzzleId),
+      player_name: playerName,
+      player_avatar: entry.playerAvatar || "🦊",
+      player_id: entry.playerId || null,
+      completion_time: timeMs,
+      time_ms: timeMs,
+      score,
+      completed_at: completedAt,
+      created_at: completedAt,
+    };
+    const up2 = await client.from("leaderboard").upsert(slim, { onConflict: "id" });
+    if (!up2.error) {
+      console.log("[Supabase] Leaderboard upsert OK (slim):", entryId);
+      return { ok: true };
+    }
+    lastError = up2.error.message || lastError;
+  }
+
+  const ins = await client.from("leaderboard").insert(payload);
   if (!ins.error) {
     console.log("[Supabase] Leaderboard insert OK:", entryId);
     return { ok: true };
   }
   lastError = ins.error.message || lastError;
 
+  if (/foreign key|violates foreign key/i.test(lastError)) {
+    return {
+      ok: false,
+      error:
+        "FK gagal: puzzle belum ada di Supabase puzzles. Pastikan TTS sudah terpublikasi.",
+    };
+  }
+
   console.warn("[Supabase] Insert leaderboard GAGAL:", lastError);
   return { ok: false, error: lastError || "unknown error" };
+}
+
+export async function deleteLeaderboardEntryFromSupabase(
+  puzzleId: string,
+  entryId: string
+): Promise<boolean> {
+  const client = getSupabase();
+  if (!client || !entryId) return false;
+  try {
+    let q = client.from("leaderboard").delete().eq("id", entryId);
+    if (puzzleId) q = q.eq("puzzle_id", puzzleId);
+    const { error } = await q;
+    if (error) {
+      console.warn("[Supabase] Delete leaderboard entry error:", error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error("[Supabase] Delete leaderboard entry exception:", err);
+    return false;
+  }
 }
 
 export async function fetchUserAccountsFromSupabase(): Promise<Record<string, any> | null> {

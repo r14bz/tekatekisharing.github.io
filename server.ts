@@ -11,6 +11,7 @@ import {
   deletePuzzleFromSupabase,
   fetchLeaderboardsFromSupabase,
   insertLeaderboardEntryToSupabase,
+  deleteLeaderboardEntryFromSupabase,
   fetchUserAccountsFromSupabase,
   upsertUserAccountToSupabase,
   fetchProfilesFromSupabase,
@@ -1023,30 +1024,32 @@ function upsertLocalLeaderboardEntry(puzzleId: string, entry: any): any {
 async function ensureLeaderboardsFromSupabase() {
   try {
     const sb = await fetchLeaderboardsFromSupabase();
-    if (!sb || Object.keys(sb).length === 0) return;
+    // null = fetch failed → keep existing cache
+    if (sb === null) return;
+    // Successful fetch (even empty): REPLACE cache so deletes stick & cold instances fill
+    leaderboardsCache = {};
     for (const [pId, entries] of Object.entries(sb)) {
       if (!Array.isArray(entries)) continue;
-      if (!leaderboardsCache[pId]) leaderboardsCache[pId] = [];
-      for (const e of entries) {
-        upsertLocalLeaderboardEntry(pId, e);
-      }
+      leaderboardsCache[pId] = sortLeaderboardEntries(entries).slice(0, 100);
     }
+    writeJsonFile(LEADERBOARDS_FILE, leaderboardsCache);
   } catch (err) {
-    console.warn("[leaderboard] Supabase merge note:", err);
+    console.warn("[leaderboard] Supabase replace note:", err);
   }
 }
 
 
-// GET all leaderboard entries (Global, filtered to active existing puzzles only)
+// GET all leaderboard entries (Global) — Supabase source of truth
 app.get("/api/leaderboards", async (req, res) => {
   try {
     await ensureLeaderboardsFromSupabase();
-    const activePuzzleIds = new Set(puzzlesCache.map((p) => p.id));
-    // Jika puzzlesCache kosong di instance ini, coba isi dari Supabase
+
+    let activePuzzleIds = new Set(puzzlesCache.map((p) => p.id));
     if (activePuzzleIds.size === 0) {
       try {
         const sbPuzzles = await fetchPuzzlesFromSupabase();
         if (sbPuzzles?.length) {
+          puzzlesCache = sbPuzzles.map((p: any) => normalizePuzzle(p));
           sbPuzzles.forEach((p: any) => activePuzzleIds.add(p.id));
         }
       } catch { /* ignore */ }
@@ -1055,7 +1058,7 @@ app.get("/api/leaderboards", async (req, res) => {
     const allEntries: any[] = [];
     Object.entries(leaderboardsCache).forEach(([puzzleId, entries]) => {
       if ((!activePuzzleIds.size || activePuzzleIds.has(puzzleId)) && Array.isArray(entries)) {
-        allEntries.push(...entries);
+        allEntries.push(...entries.map((e) => ({ ...e, puzzleId: e.puzzleId || puzzleId })));
       }
     });
 
@@ -1066,7 +1069,7 @@ app.get("/api/leaderboards", async (req, res) => {
   }
 });
 
-// GET leaderboard entries for a specific puzzle
+// GET leaderboard entries for a specific puzzle — Supabase source of truth
 app.get("/api/leaderboard/:puzzleId", async (req, res) => {
   try {
     const puzzleId = req.params.puzzleId;
@@ -1078,7 +1081,7 @@ app.get("/api/leaderboard/:puzzleId", async (req, res) => {
   }
 });
 
-// POST submit a leaderboard entry (global across all users)
+// POST submit a leaderboard entry — persist to Supabase first
 app.post("/api/leaderboard/:puzzleId", async (req, res) => {
   try {
     const puzzleId = req.params.puzzleId;
@@ -1088,8 +1091,8 @@ app.post("/api/leaderboard/:puzzleId", async (req, res) => {
       return res.status(400).json({ success: false, message: "Data skor tidak valid." });
     }
 
-    const timeMs = Number(entry.timeMs) || 0;
-    if (timeMs <= 0) {
+    const timeMs = Math.max(1, Math.floor(Number(entry.timeMs) || 0));
+    if (!(timeMs > 0)) {
       return res.status(400).json({ success: false, message: "Waktu pengerjaan tidak valid." });
     }
 
@@ -1103,7 +1106,7 @@ app.post("/api/leaderboard/:puzzleId", async (req, res) => {
       playerId: entry.playerId || entry.userId || null,
       playerEmail: entry.playerEmail || entry.email || null,
       timeMs,
-      score: Number(entry.score) || 1000,
+      score: Math.max(0, Math.floor(Number(entry.score) || 1000)),
       formattedTime: entry.formattedTime || null,
       completedAt: Number(entry.completedAt) || Date.now(),
       puzzleTitle: entry.puzzleTitle || null,
@@ -1111,12 +1114,7 @@ app.post("/api/leaderboard/:puzzleId", async (req, res) => {
 
     const saved = upsertLocalLeaderboardEntry(puzzleId, newEntry);
     const persistResult = await insertLeaderboardEntryToSupabase(puzzleId, saved);
-    const ok = Boolean(persistResult && (persistResult as any).ok !== false && persistResult !== false);
-    // Support both old boolean and new {ok,error} return shapes
-    const persisted =
-      typeof persistResult === "object" && persistResult !== null
-        ? Boolean((persistResult as any).ok)
-        : Boolean(persistResult);
+    const persisted = Boolean(persistResult && (persistResult as any).ok);
     const persistError =
       typeof persistResult === "object" && persistResult !== null
         ? (persistResult as any).error
@@ -1124,14 +1122,27 @@ app.post("/api/leaderboard/:puzzleId", async (req, res) => {
 
     if (!persisted) {
       console.warn("[leaderboard] Upsert Supabase gagal untuk", puzzleId, saved.id, persistError);
+    } else {
+      await ensureLeaderboardsFromSupabase();
     }
+
+    const cloudList = sortLeaderboardEntries(leaderboardsCache[puzzleId] || []);
+    const cloudSaved =
+      cloudList.find(
+        (e) =>
+          e.id === saved.id ||
+          (saved.playerId && e.playerId === saved.playerId) ||
+          (saved.playerEmail && e.playerEmail === saved.playerEmail) ||
+          e.playerName === saved.playerName
+      ) || saved;
 
     res.json({
       success: true,
       message: persisted
-        ? "Skor berhasil disimpan di leaderboard cloud!"
+        ? "Skor berhasil disimpan di leaderboard Supabase!"
         : "Skor tersimpan di server, tetapi gagal ke Supabase: " + (persistError || "unknown"),
-      data: saved,
+      data: cloudSaved,
+      list: cloudList,
       persisted,
       persistError: persistError || null,
     });
@@ -2101,6 +2112,7 @@ app.delete("/api/admin/comments/:puzzleId/:commentId", requireAdminAuth, (req, r
 app.get("/api/admin/leaderboards", requireAdminAuth, async (req, res) => {
   try {
     await initSupabaseData();
+    await ensureLeaderboardsFromSupabase();
   const allEntries: any[] = [];
   Object.entries(leaderboardsCache).forEach(([puzzleId, entries]) => {
     const puzzle = puzzlesCache.find((p) => p.id === puzzleId);
@@ -2130,13 +2142,14 @@ app.get("/api/admin/leaderboards", requireAdminAuth, async (req, res) => {
 });
 
 // 16. Admin - Delete Suspicious Leaderboard Entry
-app.delete("/api/admin/leaderboards/:puzzleId/:id", requireAdminAuth, (req, res) => {
+app.delete("/api/admin/leaderboards/:puzzleId/:id", requireAdminAuth, async (req, res) => {
   const { puzzleId, id } = req.params;
   if (leaderboardsCache[puzzleId]) {
     leaderboardsCache[puzzleId] = leaderboardsCache[puzzleId].filter((e: any) => e.id !== id);
     writeJsonFile(LEADERBOARDS_FILE, leaderboardsCache);
   }
-  res.json({ success: true, message: "Rekor skor leaderboard berhasil dihapus." });
+  await deleteLeaderboardEntryFromSupabase(puzzleId, id).catch(() => {});
+  res.json({ success: true, message: "Rekor skor leaderboard berhasil dihapus dari Supabase." });
 });
 
 // 17. Public Announcement & Admin Announcement Management

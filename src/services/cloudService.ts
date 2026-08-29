@@ -241,6 +241,7 @@ export const CloudService = {
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
+          // Cloud is source of truth (empty array is valid)
           setCache(cacheKey, json.data, LEADERBOARD_TTL);
           return json.data;
         }
@@ -328,6 +329,12 @@ export const CloudService = {
       const json = await res.json();
       if (json.success && json.data) {
         StorageService.addLeaderboardEntry(json.data);
+        if (Array.isArray(json.list)) {
+          setCache(`leaderboard:${puzzleId}`, json.list, LEADERBOARD_TTL);
+        }
+        if (json.persisted === false) {
+          console.warn('Leaderboard not persisted to Supabase:', json.persistError || json.message);
+        }
         return json.data;
       }
     } catch (err) {
