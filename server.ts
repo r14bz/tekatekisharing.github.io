@@ -1756,7 +1756,6 @@ app.post("/api/auth/login-email", async (req, res) => {
         message: "Kata sandi salah. Silakan coba lagi.",
       });
     }
-    }
 
     // Successful login -> issue new authToken
     const authToken = generateAuthToken();
