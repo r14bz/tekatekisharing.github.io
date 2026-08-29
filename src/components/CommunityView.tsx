@@ -183,6 +183,29 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
     return () => window.removeEventListener('tts-realtime', onRealtime);
   }, []);
 
+  // Update playsCount / last player segera setelah play tercatat
+  useEffect(() => {
+    const onPlay = (e: Event) => {
+      const d = (e as CustomEvent)?.detail;
+      if (!d?.puzzleId) return;
+      setCommunityPuzzles((prev) =>
+        prev.map((p) =>
+          p.id === d.puzzleId
+            ? {
+                ...p,
+                playsCount: d.playsCount ?? (Number(p.playsCount) || 0) + 1,
+                lastPlayerName: d.lastPlayerName || p.lastPlayerName,
+                lastPlayerAvatar: d.lastPlayerAvatar || p.lastPlayerAvatar,
+                lastPlayedAt: d.lastPlayedAt || Date.now(),
+              }
+            : p
+        )
+      );
+    };
+    window.addEventListener('tts-play-recorded', onPlay);
+    return () => window.removeEventListener('tts-play-recorded', onPlay);
+  }, []);
+
   const handleUpdatePuzzle = (updated: CrosswordPuzzle) => {
     setCommunityPuzzles((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
     setMyPuzzles((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));

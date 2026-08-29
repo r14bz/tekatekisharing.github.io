@@ -287,7 +287,49 @@ function requireAdminAuth(req: express.Request, res: express.Response, next: exp
 }
 
 // Helper to ensure puzzles have reaction and comments containers
+/** Play stats disimpan di userReactions.__ttsMeta agar tahan di kolom JSONB yang sudah ada */
+function extractPlayMeta(p: any): {
+  playsCount: number;
+  completionsCount: number;
+  lastPlayerName?: string;
+  lastPlayerAvatar?: string;
+  lastPlayerId?: string;
+  lastPlayedAt?: number;
+} {
+  const ur = p?.userReactions || p?.user_reactions || {};
+  const meta = (ur && typeof ur === "object" && ur.__ttsMeta && typeof ur.__ttsMeta === "object")
+    ? ur.__ttsMeta
+    : {};
+  const data = p?.data && typeof p.data === "object" ? p.data : {};
+  return {
+    playsCount:
+      Number(p?.playsCount ?? p?.plays_count ?? meta.playsCount ?? data.playsCount ?? 0) || 0,
+    completionsCount:
+      Number(p?.completionsCount ?? p?.completions_count ?? meta.completionsCount ?? data.completionsCount ?? 0) || 0,
+    lastPlayerName: p?.lastPlayerName || p?.last_player_name || meta.lastPlayerName || data.lastPlayerName || undefined,
+    lastPlayerAvatar: p?.lastPlayerAvatar || p?.last_player_avatar || meta.lastPlayerAvatar || data.lastPlayerAvatar || undefined,
+    lastPlayerId: p?.lastPlayerId || p?.last_player_id || meta.lastPlayerId || data.lastPlayerId || undefined,
+    lastPlayedAt: Number(p?.lastPlayedAt ?? p?.last_played_at ?? meta.lastPlayedAt ?? data.lastPlayedAt ?? 0) || undefined,
+  };
+}
+
+function withPlayMetaEmbedded(puzzle: any): any {
+  const meta = {
+    playsCount: Number(puzzle.playsCount) || 0,
+    completionsCount: Number(puzzle.completionsCount) || 0,
+    lastPlayerName: puzzle.lastPlayerName || null,
+    lastPlayerAvatar: puzzle.lastPlayerAvatar || null,
+    lastPlayerId: puzzle.lastPlayerId || null,
+    lastPlayedAt: puzzle.lastPlayedAt || null,
+  };
+  const ur = { ...(puzzle.userReactions || {}) };
+  ur.__ttsMeta = meta;
+  return { ...puzzle, userReactions: ur };
+}
+
 function normalizePuzzle(p: any): any {
+  const play = extractPlayMeta(p);
+  const urRaw = p.userReactions || p.user_reactions || {};
   return {
     ...p,
     reactions: p.reactions || {
@@ -298,14 +340,14 @@ function normalizePuzzle(p: any): any {
       fire: 0,
       sad: 0,
     },
-    userReactions: p.userReactions || {},
+    userReactions: urRaw && typeof urRaw === "object" ? urRaw : {},
     comments: Array.isArray(p.comments) ? p.comments : [],
-    playsCount: Number(p.playsCount ?? p.plays_count ?? 0) || 0,
-    completionsCount: Number(p.completionsCount ?? p.completions_count ?? 0) || 0,
-    lastPlayerName: p.lastPlayerName || p.last_player_name || undefined,
-    lastPlayerAvatar: p.lastPlayerAvatar || p.last_player_avatar || undefined,
-    lastPlayerId: p.lastPlayerId || p.last_player_id || undefined,
-    lastPlayedAt: Number(p.lastPlayedAt ?? p.last_played_at ?? 0) || undefined,
+    playsCount: play.playsCount,
+    completionsCount: play.completionsCount,
+    lastPlayerName: play.lastPlayerName,
+    lastPlayerAvatar: play.lastPlayerAvatar,
+    lastPlayerId: play.lastPlayerId,
+    lastPlayedAt: play.lastPlayedAt,
   };
 }
 
@@ -556,9 +598,32 @@ app.get("/api/puzzles", async (req, res) => {
   try {
     const sbPuzzles = await fetchPuzzlesFromSupabase();
     if (sbPuzzles !== null) {
-      // REPLACE local cache — do not merge with stale /tmp entries
+      const prevById = new Map(puzzlesCache.map((p) => [p.id, p]));
       puzzlesCache = sbPuzzles
-        .map((p) => normalizePuzzle(p))
+        .map((p) => {
+          const n = normalizePuzzle(p);
+          const prev = prevById.get(n.id);
+          // Ambil plays/lastPlayer tertinggi (hindari regression 0 setelah cold refresh)
+          if (prev) {
+            const prevPlays = Number(prev.playsCount) || 0;
+            const nPlays = Number(n.playsCount) || 0;
+            if (prevPlays > nPlays) {
+              n.playsCount = prevPlays;
+              n.lastPlayerName = prev.lastPlayerName || n.lastPlayerName;
+              n.lastPlayerAvatar = prev.lastPlayerAvatar || n.lastPlayerAvatar;
+              n.lastPlayerId = prev.lastPlayerId || n.lastPlayerId;
+              n.lastPlayedAt = prev.lastPlayedAt || n.lastPlayedAt;
+            } else if (prevPlays === nPlays && prev.lastPlayedAt && n.lastPlayedAt) {
+              if (Number(prev.lastPlayedAt) > Number(n.lastPlayedAt)) {
+                n.lastPlayerName = prev.lastPlayerName || n.lastPlayerName;
+                n.lastPlayerAvatar = prev.lastPlayerAvatar || n.lastPlayerAvatar;
+                n.lastPlayerId = prev.lastPlayerId || n.lastPlayerId;
+                n.lastPlayedAt = prev.lastPlayedAt;
+              }
+            }
+          }
+          return n;
+        })
         .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       writeJsonFile(PUZZLES_FILE, puzzlesCache);
     }
@@ -566,7 +631,7 @@ app.get("/api/puzzles", async (req, res) => {
     console.warn("[API] /puzzles Supabase refresh note:", err);
   }
 
-    // Enrich author avatar/name from live profiles (source of truth for identity)
+  // Enrich author avatar/name from live profiles
   const enriched = puzzlesCache.map((p) => {
     const pid = p.authorId;
     if (pid && profilesCache[pid]) {
@@ -773,6 +838,9 @@ app.post("/api/puzzles/:id/play", async (req, res) => {
       puzzle.lastPlayerId = playerId || undefined;
       puzzle.lastPlayedAt = Date.now();
     }
+
+    // Embed stats ke userReactions.__ttsMeta (kolom JSONB yang pasti ada)
+    puzzle = withPlayMetaEmbedded(puzzle);
 
     const idx = puzzlesCache.findIndex((p) => p.id === id);
     if (idx >= 0) puzzlesCache[idx] = puzzle;

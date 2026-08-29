@@ -81,6 +81,28 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
     };
   }, [creator.id, creator.email, creator.name]);
 
+  useEffect(() => {
+    const onPlay = (e: Event) => {
+      const d = (e as CustomEvent)?.detail;
+      if (!d?.puzzleId) return;
+      setPuzzles((prev) =>
+        prev.map((p) =>
+          p.id === d.puzzleId
+            ? {
+                ...p,
+                playsCount: d.playsCount ?? (Number(p.playsCount) || 0) + 1,
+                lastPlayerName: d.lastPlayerName || p.lastPlayerName,
+                lastPlayerAvatar: d.lastPlayerAvatar || p.lastPlayerAvatar,
+                lastPlayedAt: d.lastPlayedAt || Date.now(),
+              }
+            : p
+        )
+      );
+    };
+    window.addEventListener('tts-play-recorded', onPlay);
+    return () => window.removeEventListener('tts-play-recorded', onPlay);
+  }, []);
+
   const creatorPuzzles = useMemo(() => {
     return puzzles
       .filter((p) => !p.isDraft && !p.isBanned && matchesCreator(p, creator))

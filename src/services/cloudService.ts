@@ -158,20 +158,52 @@ export const CloudService = {
           playerEmail: profile.email || null,
         }),
       });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        console.warn('[play] HTTP', res.status);
+        return null;
+      }
       const json = await res.json();
       if (json?.success) {
         try {
           sessionStorage.setItem(key, '1');
         } catch { /* ignore */ }
+        // Update community cache locally so UI sees new counts without full reload lag
+        try {
+          const list = StorageService.getCommunityPuzzlesCache() || [];
+          const next = list.map((p: any) =>
+            p.id === puzzleId
+              ? {
+                  ...p,
+                  playsCount: json.playsCount ?? (Number(p.playsCount) || 0) + 1,
+                  lastPlayerName: json.lastPlayerName || profile.name,
+                  lastPlayerAvatar: json.lastPlayerAvatar || profile.avatar,
+                  lastPlayedAt: json.lastPlayedAt || Date.now(),
+                }
+              : p
+          );
+          StorageService.saveCommunityPuzzlesCache(next);
+        } catch { /* ignore */ }
         try {
           // @ts-ignore
           if (typeof memoryCache !== 'undefined' && memoryCache?.clear) memoryCache.clear();
         } catch { /* ignore */ }
+        // Notify UI to refetch
+        try {
+          window.dispatchEvent(
+            new CustomEvent('tts-play-recorded', {
+              detail: {
+                puzzleId,
+                playsCount: json.playsCount,
+                lastPlayerName: json.lastPlayerName,
+                lastPlayerAvatar: json.lastPlayerAvatar,
+              },
+            })
+          );
+        } catch { /* ignore */ }
         return typeof json.playsCount === 'number' ? json.playsCount : null;
       }
-    } catch {
-      // silent
+    } catch (err) {
+      console.warn('[play] error', err);
     }
     return null;
   },

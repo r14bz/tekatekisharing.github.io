@@ -335,12 +335,32 @@ export async function fetchPuzzlesFromSupabase(): Promise<any[] | null> {
           reactions: row.reactions || row.data.reactions,
           userReactions: row.user_reactions || row.userReactions || row.data.userReactions,
           comments: row.comments || row.data.comments || [],
-          playsCount: Number(row.plays_count ?? row.playsCount ?? row.data.playsCount ?? 0) || 0,
-          completionsCount: Number(row.completions_count ?? row.completionsCount ?? row.data.completionsCount ?? 0) || 0,
-          lastPlayerName: row.data.lastPlayerName || row.last_player_name || null,
-          lastPlayerAvatar: row.data.lastPlayerAvatar || row.last_player_avatar || null,
-          lastPlayerId: row.data.lastPlayerId || row.last_player_id || null,
-          lastPlayedAt: Number(row.data.lastPlayedAt || row.last_played_at || 0) || null,
+          playsCount: Number(
+            row.plays_count ?? row.playsCount ?? row.data.playsCount ??
+            (row.user_reactions && row.user_reactions.__ttsMeta && row.user_reactions.__ttsMeta.playsCount) ?? 0
+          ) || 0,
+          completionsCount: Number(
+            row.completions_count ?? row.completionsCount ?? row.data.completionsCount ??
+            (row.user_reactions && row.user_reactions.__ttsMeta && row.user_reactions.__ttsMeta.completionsCount) ?? 0
+          ) || 0,
+          lastPlayerName:
+            row.data.lastPlayerName ||
+            (row.user_reactions && row.user_reactions.__ttsMeta && row.user_reactions.__ttsMeta.lastPlayerName) ||
+            null,
+          lastPlayerAvatar:
+            row.data.lastPlayerAvatar ||
+            (row.user_reactions && row.user_reactions.__ttsMeta && row.user_reactions.__ttsMeta.lastPlayerAvatar) ||
+            null,
+          lastPlayerId:
+            row.data.lastPlayerId ||
+            (row.user_reactions && row.user_reactions.__ttsMeta && row.user_reactions.__ttsMeta.lastPlayerId) ||
+            null,
+          lastPlayedAt: Number(
+            row.data.lastPlayedAt ||
+            (row.user_reactions && row.user_reactions.__ttsMeta && row.user_reactions.__ttsMeta.lastPlayedAt) ||
+            0
+          ) || null,
+          userReactions: row.user_reactions || row.userReactions || row.data.userReactions || {},
         };
       }
       return {
@@ -362,8 +382,30 @@ export async function fetchPuzzlesFromSupabase(): Promise<any[] | null> {
         comments: row.comments || [],
         isDraft: Boolean(row.is_draft ?? row.isDraft),
         isFeatured: Boolean(row.is_featured ?? row.isFeatured),
-        playsCount: Number(row.plays_count ?? row.playsCount ?? (row.data && row.data.playsCount) ?? 0) || 0,
-        completionsCount: Number(row.completions_count ?? row.completionsCount ?? (row.data && row.data.completionsCount) ?? 0) || 0,
+        playsCount: Number(
+          row.plays_count ?? row.playsCount ??
+          (row.user_reactions && row.user_reactions.__ttsMeta && row.user_reactions.__ttsMeta.playsCount) ??
+          (row.data && row.data.playsCount) ?? 0
+        ) || 0,
+        completionsCount: Number(
+          row.completions_count ?? row.completionsCount ??
+          (row.user_reactions && row.user_reactions.__ttsMeta && row.user_reactions.__ttsMeta.completionsCount) ??
+          (row.data && row.data.completionsCount) ?? 0
+        ) || 0,
+        lastPlayerName:
+          (row.user_reactions && row.user_reactions.__ttsMeta && row.user_reactions.__ttsMeta.lastPlayerName) ||
+          (row.data && row.data.lastPlayerName) || null,
+        lastPlayerAvatar:
+          (row.user_reactions && row.user_reactions.__ttsMeta && row.user_reactions.__ttsMeta.lastPlayerAvatar) ||
+          (row.data && row.data.lastPlayerAvatar) || null,
+        lastPlayerId:
+          (row.user_reactions && row.user_reactions.__ttsMeta && row.user_reactions.__ttsMeta.lastPlayerId) ||
+          (row.data && row.data.lastPlayerId) || null,
+        lastPlayedAt: Number(
+          (row.user_reactions && row.user_reactions.__ttsMeta && row.user_reactions.__ttsMeta.lastPlayedAt) ||
+          (row.data && row.data.lastPlayedAt) || 0
+        ) || null,
+        userReactions: row.user_reactions || row.userReactions || {},
       };
     });
 
@@ -382,8 +424,21 @@ export async function upsertPuzzleToSupabase(puzzle: any): Promise<boolean> {
     // Payload lengkap sesuai schema ideal
     // data JSONB menyimpan field dinamis (playsCount, lastPlayer*, dll)
     // agar tetap hidup meski kolom flat tidak ada di schema
+
+    // Pastikan play stats ikut di user_reactions (kolom JSONB yang sudah ada di schema)
+    const urWithMeta = {
+      ...(puzzle.userReactions || {}),
+      __ttsMeta: {
+        playsCount: Number(puzzle.playsCount) || 0,
+        completionsCount: Number(puzzle.completionsCount) || 0,
+        lastPlayerName: puzzle.lastPlayerName || null,
+        lastPlayerAvatar: puzzle.lastPlayerAvatar || null,
+        lastPlayerId: puzzle.lastPlayerId || null,
+        lastPlayedAt: puzzle.lastPlayedAt || null,
+      },
+    };
+
     const dataBlob = {
-      ...(puzzle && typeof puzzle === "object" ? puzzle : {}),
       playsCount: Number(puzzle.playsCount) || 0,
       completionsCount: Number(puzzle.completionsCount) || 0,
       lastPlayerName: puzzle.lastPlayerName || null,
@@ -405,7 +460,7 @@ export async function upsertPuzzleToSupabase(puzzle: any): Promise<boolean> {
       grid: puzzle.grid || [],
       clues: puzzle.clues || { across: [], down: [] },
       reactions: puzzle.reactions || { like: 0, laugh: 0, love: 0, think: 0, fire: 0, sad: 0 },
-      user_reactions: puzzle.userReactions || {},
+      user_reactions: urWithMeta,
       comments: puzzle.comments || [],
       is_draft: Boolean(puzzle.isDraft),
       is_featured: Boolean(puzzle.isFeatured),
