@@ -131,25 +131,34 @@ export default function App() {
   const [shareModalPuzzle, setShareModalPuzzle] = useState<CrosswordPuzzle | null>(null);
   const [isSyncModalOpen, setIsSyncModalOpen] = useState<boolean>(false);
 
-  // On initial mount: check if URL contains shared puzzle
+  // On initial mount: shared puzzle / restore — play only if logged in
   useEffect(() => {
-    StorageService.cleanLegacySeedData();
     const sharedPuzzle = SyncService.checkUrlForSharedPuzzle();
     if (sharedPuzzle) {
-      setCurrentPlayingPuzzle(sharedPuzzle);
-      setActiveTab('play');
-    } else {
-      const lastActiveId = StorageService.getActivePuzzleId();
-      if (lastActiveId) {
-        const p = StorageService.getPuzzleById(lastActiveId);
-        if (p) {
-          setCurrentPlayingPuzzle(p);
-        }
+      if (StorageService.getUserProfile().isLoggedIn) {
+        setCurrentPlayingPuzzle(sharedPuzzle);
+        setActiveTab('play');
+      } else {
+        // Simpan sementara & minta login dulu
+        StorageService.saveReceivedPuzzle(sharedPuzzle);
+        StorageService.setActivePuzzleId(sharedPuzzle.id);
+        setIsSyncModalOpen(true);
       }
+      return;
+    }
+    const activeId = StorageService.getActivePuzzleId();
+    if (activeId && StorageService.getUserProfile().isLoggedIn) {
+      const p = StorageService.getPuzzleById(activeId);
+      if (p) setCurrentPlayingPuzzle(p);
     }
   }, []);
 
   const handlePlayPuzzle = (puzzle: CrosswordPuzzle) => {
+    // Hanya user terdaftar yang boleh mengisi / memainkan TTS
+    if (!userProfile.isLoggedIn) {
+      setIsSyncModalOpen(true);
+      return;
+    }
     setCurrentPlayingPuzzle(puzzle);
     StorageService.setActivePuzzleId(puzzle.id);
     setActiveTab('play');

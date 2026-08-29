@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Eye, Activity, Palette, Check } from 'lucide-react';
+import { Eye, Activity, Palette, Check, Download } from 'lucide-react';
 import { StorageService } from '../services/storageService';
 
 interface PresenceStats {
@@ -51,11 +51,36 @@ function formatNumber(n: number): string {
 export const FooterStats: React.FC = () => {
   const [stats, setStats] = useState<PresenceStats>({ totalVisits: 0, online: 1 });
   const [colorAccent, setColorAccent] = useState<string>(() => StorageService.getColorAccent());
+  const [installPrompt, setInstallPrompt] = useState<any>(null);
+  const [isStandalone, setIsStandalone] = useState(false);
   const clientIdRef = useRef<string>('');
 
   const handleSelectAccent = (id: string) => {
     setColorAccent(id);
     StorageService.setColorAccent(id);
+  };
+
+  useEffect(() => {
+    const standalone =
+      window.matchMedia('(display-mode: standalone)').matches ||
+      (window.navigator as any).standalone === true;
+    setIsStandalone(standalone);
+
+    const onBip = (e: Event) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', onBip);
+    return () => window.removeEventListener('beforeinstallprompt', onBip);
+  }, []);
+
+  const handleInstallApp = async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    try {
+      await installPrompt.userChoice;
+    } catch { /* ignore */ }
+    setInstallPrompt(null);
   };
 
   useEffect(() => {
@@ -157,6 +182,27 @@ export const FooterStats: React.FC = () => {
             role="group"
             aria-label="Pilih warna tema"
           >
+            {!isStandalone && (
+              <button
+                type="button"
+                id="btn-install-pwa"
+                onClick={handleInstallApp}
+                disabled={!installPrompt}
+                title={
+                  installPrompt
+                    ? 'Pasang aplikasi ke layar utama'
+                    : 'Di iOS: Bagikan → Add to Home Screen. Di Android/Chrome: menu browser → Install app.'
+                }
+                className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold border transition-all mr-1 ${
+                  installPrompt
+                    ? 'bg-indigo-50 dark:bg-indigo-950/50 border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 cursor-pointer'
+                    : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 text-slate-400 cursor-default'
+                }`}
+              >
+                <Download className="w-3 h-3" />
+                Install
+              </button>
+            )}
             <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500 mr-0.5">
               <Palette className="w-3 h-3" />
               Tema

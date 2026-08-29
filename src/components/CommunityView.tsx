@@ -923,6 +923,10 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
                         type="button"
                         id={`btn-card-play-${puzzle.id}`}
                         onClick={() => {
+                          if (!userProfile.isLoggedIn) {
+                            if (onOpenSyncModal) onOpenSyncModal();
+                            return;
+                          }
                           // "Main Ulang" (sudah selesai): hapus progress agar grid kosong
                           if (isCompleted) {
                             const empty = Array.from(
@@ -947,8 +951,20 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
                         }}
                         className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm hover:shadow-indigo-500/25 cursor-pointer shrink-0"
                       >
-                        <Play className="w-3.5 h-3.5 fill-current" />
-                        <span>{hasProgress ? 'Lanjutkan' : isCompleted ? 'Main Ulang' : 'Mainkan'}</span>
+                        {userProfile.isLoggedIn ? (
+                          <Play className="w-3.5 h-3.5 fill-current" />
+                        ) : (
+                          <Lock className="w-3.5 h-3.5" />
+                        )}
+                        <span>
+                          {!userProfile.isLoggedIn
+                            ? 'Login untuk Main'
+                            : hasProgress
+                              ? 'Lanjutkan'
+                              : isCompleted
+                                ? 'Main Ulang'
+                                : 'Mainkan'}
+                        </span>
                       </button>
                     ) : (
                       <button
