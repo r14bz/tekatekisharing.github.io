@@ -111,8 +111,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
 
   const stats = useMemo(() => {
     const totalCreated = creatorPuzzles.length;
-    const totalPlays = creatorPuzzles.reduce((s, p) => s + (p.playsCount || 0), 0);
-    const totalCompletions = creatorPuzzles.reduce((s, p) => s + (p.completionsCount || 0), 0);
+        const totalCompletions = creatorPuzzles.reduce((s, p) => s + (p.completionsCount || 0), 0);
     const totalReactions = creatorPuzzles.reduce((s, p) => {
       const r = p.reactions;
       if (!r) return s;
@@ -126,7 +125,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
       );
     }, 0);
     const featured = creatorPuzzles.filter((p) => p.isFeatured).length;
-    return { totalCreated, totalPlays, totalCompletions, totalReactions, featured };
+    return { totalCreated, totalCompletions, totalReactions, featured };
   }, [creatorPuzzles]);
 
   const displayName = creator.name || 'Kreator TTS';
@@ -223,10 +222,9 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
         </div>
 
         {/* Stats grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-5">
+        <div className="grid grid-cols-3 gap-2 mt-5">
           {[
             { label: 'TTS Dibuat', value: stats.totalCreated, icon: BookOpen, color: 'text-indigo-600 dark:text-indigo-400' },
-            { label: 'Dimainkan', value: stats.totalPlays, icon: Play, color: 'text-sky-600 dark:text-sky-400' },
             { label: 'Diselesaikan', value: stats.totalCompletions, icon: CheckCircle2, color: 'text-emerald-600 dark:text-emerald-400' },
             { label: 'Reaksi', value: stats.totalReactions, icon: Heart, color: 'text-rose-600 dark:text-rose-400' },
           ].map((s) => (
@@ -295,17 +293,6 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                         <span>{puzzle.width}×{puzzle.height}</span>
                         <span>·</span>
                         <span>{formatDate(puzzle.createdAt)}</span>
-                        <span>·</span>
-                        <span>{puzzle.playsCount || 0} plays</span>
-                        {puzzle.lastPlayerName ? (
-                          <>
-                            <span>·</span>
-                            <span className="inline-flex items-center gap-1">
-                              <span>{puzzle.lastPlayerAvatar || '🎮'}</span>
-                              <span className="truncate max-w-[100px]">{puzzle.lastPlayerName}</span>
-                            </span>
-                          </>
-                        ) : null}
                         <span>·</span>
                         <span>{reactionCount} reaksi</span>
                       </div>

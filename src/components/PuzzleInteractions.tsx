@@ -17,6 +17,8 @@ interface PuzzleInteractionsProps {
   onUpdatePuzzle?: (updatedPuzzle: CrosswordPuzzle) => void;
   onOpenSyncModal?: () => void;
   className?: string;
+  /** Ikon aksi di kanan baris komentar (share, piala, edit, hapus) */
+  trailingActions?: React.ReactNode;
 }
 
 const REACTION_CONFIG: {
@@ -83,6 +85,7 @@ export const PuzzleInteractions: React.FC<PuzzleInteractionsProps> = ({
   onUpdatePuzzle,
   onOpenSyncModal,
   className = '',
+  trailingActions,
 }) => {
   const getInitialReactions = (): PuzzleReactions => {
     if (puzzle.reactions) {
@@ -393,11 +396,9 @@ export const PuzzleInteractions: React.FC<PuzzleInteractionsProps> = ({
           )}
         </button>
 
-        {comments.length > 0 && !isCommentsOpen && (
-          <span className="text-[10px] text-slate-400 dark:text-slate-500 truncate">
-            Terakhir: <strong className="text-slate-600 dark:text-slate-300 font-medium">{comments[comments.length - 1]?.authorName}</strong>
-          </span>
-        )}
+        {trailingActions ? (
+          <div className="flex items-center gap-1.5 shrink-0">{trailingActions}</div>
+        ) : null}
       </div>
 
       {/* Expanded Comments Drawer / Section */}

@@ -846,26 +846,11 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
                     <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
                       {puzzle.clues.length} Soal ({puzzle.clues.filter((c) => c.direction === 'across').length}M, {puzzle.clues.filter((c) => c.direction === 'down').length}D)
                     </span>
-                    <span className="text-slate-300 dark:text-slate-600">·</span>
-                    <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 tabular-nums">
-                      {Number(puzzle.playsCount) || 0} plays
-                    </span>
-                    {puzzle.lastPlayerName ? (
-                      <>
-                        <span className="text-slate-300 dark:text-slate-600">·</span>
-                        <span
-                          className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-500 dark:text-slate-400 truncate max-w-[140px]"
-                          title={`Terakhir dimainkan oleh ${puzzle.lastPlayerName}`}
-                        >
-                          <span className="text-xs leading-none">{puzzle.lastPlayerAvatar || '🎮'}</span>
-                          <span className="truncate">{puzzle.lastPlayerName}</span>
-                        </span>
-                      </>
-                    ) : null}
                   </div>
 
-                  {/* Code Tag & Status Badges */}
-                  <div className="flex flex-wrap items-center gap-2 mb-4">
+                  {/* Code Tag & Status Badges + Mainkan */}
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
                     {/* Custom Code Pill */}
                     {displayCode && (
                       <button
@@ -905,83 +890,7 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
                     )}
                   </div>
 
-                  {/* Action Buttons Row */}
-                  <div className="flex items-center justify-between gap-2 pt-1 pb-1">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {/* Share Button (only for published puzzles) */}
-                      {activeTab !== 'drafts' && (
-                        <button
-                          type="button"
-                          id={`btn-card-share-${puzzle.id}`}
-                          onClick={() => onOpenShareModal(puzzle)}
-                          className="p-2 rounded-xl bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/50 dark:hover:bg-purple-900/60 border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 transition-colors cursor-pointer shadow-2xs"
-                          title="Bagikan Kode Teka-Teki"
-                        >
-                          <Share2 className="w-4 h-4" />
-                        </button>
-                      )}
 
-                      {/* Leaderboard Button */}
-                      {activeTab !== 'drafts' && (
-                        <button
-                          type="button"
-                          id={`btn-card-leaderboard-${puzzle.id}`}
-                          onClick={() => onOpenLeaderboardForPuzzle(puzzle)}
-                          className="p-2 rounded-xl bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/50 dark:hover:bg-amber-900/60 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 transition-colors cursor-pointer shadow-2xs"
-                          title="Lihat Papan Peringkat Tercepat"
-                        >
-                          <Trophy className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                        </button>
-                      )}
-
-                      {/* Creator / Draft Edit and Delete actions (Strict Ownership Protected) */}
-                      {activeTab === 'drafts' ? (
-                        <>
-                          <button
-                            type="button"
-                            id={`btn-draft-edit-${puzzle.id}`}
-                            onClick={() => onEditPuzzle(puzzle)}
-                            className="px-2.5 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 font-bold text-xs flex items-center gap-1 transition-colors cursor-pointer"
-                            title="Lanjutkan Edit Draf"
-                          >
-                            <Edit className="w-3.5 h-3.5" />
-                            <span>Lanjut Edit</span>
-                          </button>
-                          <button
-                            type="button"
-                            id={`btn-draft-delete-${puzzle.id}`}
-                            onClick={() => handleDeleteClick(puzzle, 'draft')}
-                            className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/50 border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
-                            title="Hapus Draf"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </>
-                      ) : isOwner ? (
-                        <>
-                          <button
-                            type="button"
-                            id={`btn-card-edit-${puzzle.id}`}
-                            onClick={() => onEditPuzzle(puzzle)}
-                            className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
-                            title="Edit TTS Buatan Saya"
-                          >
-                            <Edit className="w-4 h-4" />
-                          </button>
-                          <button
-                            type="button"
-                            id={`btn-card-delete-${puzzle.id}`}
-                            onClick={() => handleDeleteClick(puzzle, 'my')}
-                            className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/50 border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
-                            title="Hapus TTS Buatan Saya"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </>
-                      ) : null}
-                    </div>
-
-                    {/* Play / Action Button */}
                     {activeTab !== 'drafts' ? (
                       <button
                         type="button"
@@ -991,7 +900,6 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
                             if (onOpenSyncModal) onOpenSyncModal();
                             return;
                           }
-                          // "Main Ulang" (sudah selesai): hapus progress agar grid kosong
                           if (isCompleted) {
                             const empty = Array.from(
                               { length: puzzle.height },
@@ -1013,7 +921,7 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
                           }
                           onPlayPuzzle(puzzle);
                         }}
-                        className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm hover:shadow-indigo-500/25 cursor-pointer shrink-0"
+                        className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm hover:shadow-indigo-500/25 cursor-pointer shrink-0"
                       >
                         {userProfile.isLoggedIn ? (
                           <Play className="w-3.5 h-3.5 fill-current" />
@@ -1022,7 +930,7 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
                         )}
                         <span>
                           {!userProfile.isLoggedIn
-                            ? 'Login untuk Main'
+                            ? 'Login'
                             : hasProgress
                               ? 'Lanjutkan'
                               : isCompleted
@@ -1035,22 +943,112 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
                         type="button"
                         id={`btn-draft-publish-action-${puzzle.id}`}
                         onClick={() => onEditPuzzle(puzzle)}
-                        className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm cursor-pointer shrink-0"
+                        className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm cursor-pointer shrink-0"
                       >
                         <Send className="w-3.5 h-3.5" />
-                        <span>Publish Draf</span>
+                        <span>Publish</span>
                       </button>
                     )}
                   </div>
 
-                  {/* Interactive Reactions and Comments */}
-                  {activeTab !== 'drafts' && (
+                  {/* Interactive Reactions and Comments (published) / aksi draf */}
+                  {activeTab === 'drafts' ? (
+                    <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-1.5">
+                      <button
+                        type="button"
+                        id={`btn-draft-edit-bottom-${puzzle.id}`}
+                        onClick={() => onEditPuzzle(puzzle)}
+                        className="p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 transition-colors cursor-pointer"
+                        title="Edit Draf"
+                      >
+                        <Edit className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        id={`btn-draft-delete-bottom-${puzzle.id}`}
+                        onClick={() => handleDeleteClick(puzzle, 'draft')}
+                        className="p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/50 border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                        title="Hapus Draf"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : (
                     <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800">
                       <PuzzleInteractions
                         puzzle={puzzle}
                         userProfile={userProfile}
                         onUpdatePuzzle={handleUpdatePuzzle}
                         onOpenSyncModal={onOpenSyncModal}
+                        trailingActions={(
+                        <>
+                          {activeTab !== 'drafts' && (
+                            <button
+                              type="button"
+                              id={`btn-card-share-${puzzle.id}`}
+                              onClick={() => onOpenShareModal(puzzle)}
+                              className="p-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/50 dark:hover:bg-purple-900/60 border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 transition-colors cursor-pointer"
+                              title="Bagikan Kode Teka-Teki"
+                            >
+                              <Share2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {activeTab !== 'drafts' && (
+                            <button
+                              type="button"
+                              id={`btn-card-leaderboard-${puzzle.id}`}
+                              onClick={() => onOpenLeaderboardForPuzzle(puzzle)}
+                              className="p-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/50 dark:hover:bg-amber-900/60 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 transition-colors cursor-pointer"
+                              title="Lihat Papan Peringkat Tercepat"
+                            >
+                              <Trophy className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                            </button>
+                          )}
+                          {activeTab === 'drafts' ? (
+                            <>
+                              <button
+                                type="button"
+                                id={`btn-draft-edit-${puzzle.id}`}
+                                onClick={() => onEditPuzzle(puzzle)}
+                                className="p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 transition-colors cursor-pointer"
+                                title="Edit Draf"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                id={`btn-draft-delete-${puzzle.id}`}
+                                onClick={() => handleDeleteClick(puzzle, 'draft')}
+                                className="p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/50 border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                                title="Hapus Draf"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          ) : isOwner ? (
+                            <>
+                              <button
+                                type="button"
+                                id={`btn-card-edit-${puzzle.id}`}
+                                onClick={() => onEditPuzzle(puzzle)}
+                                className="p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 transition-colors cursor-pointer"
+                                title="Edit TTS Buatan Saya"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                id={`btn-card-delete-${puzzle.id}`}
+                                onClick={() => handleDeleteClick(puzzle, 'my')}
+                                className="p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/50 border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                                title="Hapus TTS Buatan Saya"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          ) : null}
+                        </>
+                        )}
                       />
                     </div>
                   )}
