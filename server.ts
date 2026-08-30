@@ -882,23 +882,22 @@ app.post("/api/puzzles", async (req, res) => {
       } catch { /* ignore */ }
     }
 
-    const authUser = resolveAuthUser(req);
-
     await ensureUserAccountsLoaded();
-    const authUserResolved = resolveAuthUser(req) || authUser;
+    const authUserResolved = resolveAuthUser(req);
 
-    // Security: update existing → must be author (strict)
+    // Security: update existing → must be verified author (strict)
     if (existing && existing.authorId) {
       const check = assertPuzzleAuthor(existing, req);
       if (check.ok === false) {
         return res.status(check.status).json({ success: false, message: check.message });
       }
     } else if (!existing) {
-      // New publish: require identity (verified auth OR local profile authorId on body)
-      if (!authUserResolved?.id && !puzzle.authorId) {
+      // H3: New publish requires verified login (Bearer token or x-author-id + x-sync-key)
+      // Do NOT trust puzzle.authorId from body alone
+      if (!authUserResolved?.id) {
         return res.status(401).json({
           success: false,
-          message: "Akses ditolak: login diperlukan untuk mempublikasikan teka-teki.",
+          message: "Akses ditolak: login diperlukan untuk mempublikasikan teka-teki. Silakan masuk akun terlebih dahulu.",
         });
       }
     }
@@ -907,16 +906,22 @@ app.post("/api/puzzles", async (req, res) => {
     const resolvedAuthorId =
       (existing && existing.authorId) ||
       (authUserResolved && authUserResolved.id) ||
-      puzzle.authorId ||
       null;
+
+    if (!resolvedAuthorId) {
+      return res.status(401).json({
+        success: false,
+        message: "Akses ditolak: identitas penulis tidak terverifikasi.",
+      });
+    }
 
     const updatedPuzzle = {
       ...puzzle,
       updatedAt: now,
       createdAt: puzzle.createdAt || (existing ? existing.createdAt : now),
       authorId: resolvedAuthorId,
-      authorName: puzzle.authorName || (authUserResolved && authUserResolved.name) || (existing && existing.authorName) || "Pemain TTS",
-      authorAvatar: puzzle.authorAvatar || (authUserResolved && authUserResolved.avatar) || (existing && existing.authorAvatar) || "🦊",
+      authorName: (authUserResolved && authUserResolved.name) || puzzle.authorName || (existing && existing.authorName) || "Pemain TTS",
+      authorAvatar: (authUserResolved && authUserResolved.avatar) || puzzle.authorAvatar || (existing && existing.authorAvatar) || "🦊",
       isDraft: false,
       reactions: existing?.reactions || puzzle.reactions || {
         like: 0,
@@ -1088,27 +1093,25 @@ app.post("/api/puzzles/:id/play", async (req, res) => {
 app.post("/api/puzzles/:id/react", async (req, res) => {
   try {
     const { id } = req.params;
-    const { reactionType, previousReaction, userId, userEmail } = req.body;
+    const { reactionType, previousReaction } = req.body;
     const ip = clientIp(req);
     if (!checkRateLimit(`react:${ip}`, 30, 60_000)) {
       return res.status(429).json({ success: false, message: "Terlalu banyak reaksi. Coba lagi sebentar." });
     }
 
+    await ensureUserAccountsLoaded();
+    // H2: only trust verified auth — never body.userId / bare x-author-id
     const authUser = resolveAuthUser(req);
-    const authHeader = req.headers.authorization;
-    const authorHeaderId = req.headers["x-author-id"] as string;
-    const effectiveUserId = (authUser && authUser.id) || userId || authorHeaderId;
-    const effectiveEmail = (authUser && authUser.email) || userEmail;
-
-    if (!effectiveUserId && !effectiveEmail && !authHeader) {
+    if (!authUser?.id) {
       return res.status(401).json({
         success: false,
         message: "Hanya pengguna yang sudah login yang dapat memberikan reaksi.",
       });
     }
 
+    const effectiveUserId = authUser.id;
     const validTypes = ["like", "laugh", "love", "think", "fire", "sad"];
-    const userKey = String(effectiveUserId || effectiveEmail || "anon").toLowerCase();
+    const userKey = String(effectiveUserId).toLowerCase();
 
     // Ambil puzzle: memory → Supabase
     let puzzle = puzzlesCache.find((p) => p.id === id);
@@ -1229,18 +1232,17 @@ app.post("/api/puzzles/:id/comments", async (req, res) => {
       return res.status(429).json({ success: false, message: "Terlalu banyak komentar. Coba lagi sebentar." });
     }
 
+    await ensureUserAccountsLoaded();
+    // Only trust verified auth — never body.authorId alone
     const authUser = resolveAuthUser(req);
-    const authHeader = req.headers.authorization;
-    const authorHeaderId = req.headers['x-author-id'] as string;
-    const effectiveAuthorId = (authUser && authUser.id) || authorId || authorHeaderId;
-    const effectiveEmail = (authUser && authUser.email) || authorEmail;
-
-    if (!effectiveAuthorId && !effectiveEmail && !authHeader) {
+    if (!authUser?.id) {
       return res.status(401).json({
         success: false,
         message: "Hanya pengguna yang sudah login yang dapat menulis komentar pada teka-teki silang.",
       });
     }
+    const effectiveAuthorId = authUser.id;
+    const effectiveEmail = authUser.email || authorEmail || '';
 
     const cleanContent = sanitizeCommentContent(content);
     if (!cleanContent) {
