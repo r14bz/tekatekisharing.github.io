@@ -890,7 +890,7 @@ app.post("/api/puzzles", async (req, res) => {
     // Security: update existing → must be author (strict)
     if (existing && existing.authorId) {
       const check = assertPuzzleAuthor(existing, req);
-      if (!check.ok) {
+      if (check.ok === false) {
         return res.status(check.status).json({ success: false, message: check.message });
       }
     } else if (!existing) {
@@ -1401,7 +1401,7 @@ app.delete("/api/puzzles/:id", async (req, res) => {
     // STRICT: author must be authenticated and match (or admin)
     await ensureUserAccountsLoaded();
     const check = assertPuzzleAuthor(puzzle, req);
-    if (!check.ok) {
+    if (check.ok === false) {
       return res.status(check.status).json({ success: false, message: check.message });
     }
 

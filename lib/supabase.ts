@@ -420,7 +420,6 @@ export async function fetchPuzzlesFromSupabase(): Promise<any[] | null> {
           (row.user_reactions && row.user_reactions.__ttsMeta && row.user_reactions.__ttsMeta.lastPlayedAt) ||
           (row.data && row.data.lastPlayedAt) || 0
         ) || null,
-        userReactions: row.user_reactions || row.userReactions || {},
       };
     });
 
