@@ -33,7 +33,7 @@ app.use(compression());
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Token, Accept, x-supabase-url, x-supabase-key, X-Supabase-Url, X-Supabase-Key, *");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Token, Accept, x-author-id, x-sync-key, *");
   res.setHeader("Access-Control-Max-Age", "86400");
 
   // API dinamis: jangan di-cache browser/CDN (hindari 304 dengan body kosong/basi)
@@ -97,15 +97,9 @@ function getGeminiClient(): GoogleGenAI | null {
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
-// Dynamic Supabase credential injection from headers if provided
-app.use((req, res, next) => {
-  const customSbUrl = req.headers["x-supabase-url"] as string;
-  const customSbKey = req.headers["x-supabase-key"] as string;
-  if (customSbUrl && customSbKey) {
-    saveRuntimeSupabaseConfig(customSbUrl, customSbKey);
-  }
-  next();
-});
+// SECURITY: Do NOT accept Supabase credentials from public request headers.
+// Config only via env vars or admin-only /api/admin/supabase-config endpoint.
+
 
 // Persistent storage file paths - Vercel Serverless safe
 const isVercel = Boolean(process.env.VERCEL);
@@ -284,6 +278,170 @@ function requireAdminAuth(req: express.Request, res: express.Response, next: exp
 
   (req as any).adminUser = verified.username;
   return next();
+}
+
+/* ============================================================
+   SECURITY HELPERS: auth resolution, rate limit, sanitization
+   ============================================================ */
+
+/** Ensure user accounts are loaded from Supabase (cold-start safe) */
+async function ensureUserAccountsLoaded(): Promise<void> {
+  try {
+    if (Object.keys(userAccountsCache).length > 0) return;
+    const sbAccounts = await fetchUserAccountsFromSupabase();
+    if (sbAccounts && Object.keys(sbAccounts).length > 0) {
+      userAccountsCache = { ...userAccountsCache, ...sbAccounts };
+      writeJsonFile(USER_ACCOUNTS_FILE, userAccountsCache);
+    }
+  } catch (e) {
+    console.warn("[auth] ensureUserAccountsLoaded note:", e);
+  }
+}
+
+/** Resolve authenticated user from Bearer token or known account + sync key */
+function resolveAuthUser(req: express.Request): {
+  id: string;
+  email?: string;
+  name?: string;
+  avatar?: string;
+  authToken?: string;
+} | null {
+  const authHeader = (req.headers.authorization || "") as string;
+  const token = authHeader.startsWith("Bearer ")
+    ? authHeader.substring(7).trim()
+    : "";
+
+  if (token && !token.startsWith("adm_")) {
+    // Match token against in-memory accounts
+    for (const acc of Object.values(userAccountsCache)) {
+      if (acc && typeof acc === "object" && acc.authToken === token) {
+        return {
+          id: String(acc.id || ""),
+          email: acc.email ? String(acc.email) : undefined,
+          name: acc.name ? String(acc.name) : undefined,
+          avatar: acc.avatar ? String(acc.avatar) : undefined,
+          authToken: token,
+        };
+      }
+    }
+  }
+
+  // Fallback: x-author-id MUST be paired with matching x-sync-key from a known account.
+  // Bare x-author-id alone is NOT trusted (prevents spoofed deletes/updates).
+  const authorId = String(req.headers["x-author-id"] || "").trim();
+  const syncKey = String(req.headers["x-sync-key"] || "").trim();
+  if (authorId && syncKey) {
+    const byId = userAccountsCache[authorId];
+    if (byId && typeof byId === "object" && byId.syncKey && String(byId.syncKey) === syncKey) {
+      return {
+        id: String(byId.id || authorId),
+        email: byId.email ? String(byId.email) : undefined,
+        name: byId.name ? String(byId.name) : undefined,
+        avatar: byId.avatar ? String(byId.avatar) : undefined,
+      };
+    }
+    // Also scan by syncKey match across accounts (cold instance may key by email)
+    for (const acc of Object.values(userAccountsCache)) {
+      if (
+        acc &&
+        typeof acc === "object" &&
+        String(acc.id || "") === authorId &&
+        acc.syncKey &&
+        String(acc.syncKey) === syncKey
+      ) {
+        return {
+          id: String(acc.id || authorId),
+          email: acc.email ? String(acc.email) : undefined,
+          name: acc.name ? String(acc.name) : undefined,
+          avatar: acc.avatar ? String(acc.avatar) : undefined,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+/** Require that requester is the puzzle author (or admin). Strict: missing identity = deny. */
+function assertPuzzleAuthor(
+  puzzle: any,
+  req: express.Request
+): { ok: true; user: { id: string } } | { ok: false; status: number; message: string } {
+  const user = resolveAuthUser(req);
+  if (!user || !user.id) {
+    return {
+      ok: false,
+      status: 401,
+      message: "Akses ditolak: autentikasi diperlukan. Login atau sertakan Authorization / x-author-id.",
+    };
+  }
+  const authorId = puzzle?.authorId ? String(puzzle.authorId) : "";
+  if (authorId && authorId !== user.id) {
+    // Allow admin token as override
+    const adminTok =
+      (req.headers.authorization || "").startsWith("Bearer ")
+        ? (req.headers.authorization as string).substring(7)
+        : (req.headers["x-admin-token"] as string) || "";
+    if (adminTok && verifyAdminToken(adminTok)) {
+      return { ok: true, user };
+    }
+    return {
+      ok: false,
+      status: 403,
+      message: "Akses ditolak: Anda tidak memiliki izin untuk mengubah/menghapus teka-teki milik pemain lain.",
+    };
+  }
+  return { ok: true, user };
+}
+
+/** Simple in-memory sliding-window rate limiter (per instance; better than nothing on serverless) */
+const rateBuckets = new Map<string, number[]>();
+
+function checkRateLimit(
+  key: string,
+  maxHits: number,
+  windowMs: number
+): boolean {
+  const now = Date.now();
+  let hits = rateBuckets.get(key) || [];
+  hits = hits.filter((t) => now - t < windowMs);
+  if (hits.length >= maxHits) {
+    rateBuckets.set(key, hits);
+    return false; // limited
+  }
+  hits.push(now);
+  rateBuckets.set(key, hits);
+  // opportunistic cleanup
+  if (rateBuckets.size > 5000) {
+    const cutoff = now - windowMs * 2;
+    for (const [k, arr] of rateBuckets) {
+      const kept = arr.filter((t) => t > cutoff);
+      if (kept.length === 0) rateBuckets.delete(k);
+      else rateBuckets.set(k, kept);
+    }
+  }
+  return true;
+}
+
+function clientIp(req: express.Request): string {
+  const xf = (req.headers["x-forwarded-for"] as string) || "";
+  return (xf.split(",")[0] || req.socket?.remoteAddress || "unknown").trim();
+}
+
+/** Sanitize user-generated comment text */
+function sanitizeCommentContent(raw: any): string {
+  let s = String(raw ?? "");
+  // strip HTML tags
+  s = s.replace(/<[^>]*>/g, "");
+  // neutralize common XSS vectors
+  s = s.replace(/[<>]/g, "");
+  s = s.replace(/javascript\s*:/gi, "");
+  s = s.replace(/on\w+\s*=/gi, "");
+  // normalize whitespace
+  s = s.replace(/\s+/g, " ").trim();
+  // hard length cap
+  if (s.length > 500) s = s.slice(0, 500);
+  return s;
 }
 
 // Helper to ensure puzzles have reaction and comments containers
@@ -684,33 +842,66 @@ app.get("/api/puzzles/:query", async (req, res) => {
 });
 
 // POST / publish or update a puzzle in the cloud database
-app.post("/api/puzzles", (req, res) => {
+app.post("/api/puzzles", async (req, res) => {
   try {
     const puzzle = req.body;
     if (!puzzle || !puzzle.id || !puzzle.title || !puzzle.grid || !puzzle.clues) {
       return res.status(400).json({ success: false, message: "Data teka-teki tidak lengkap." });
     }
 
-    const index = puzzlesCache.findIndex((p) => p.id === puzzle.id);
-    const now = Date.now();
-    const existing = index >= 0 ? puzzlesCache[index] : null;
+    // Rate limit publish/update
+    const ip = clientIp(req);
+    if (!checkRateLimit(`publish:${ip}`, 20, 60_000)) {
+      return res.status(429).json({ success: false, message: "Terlalu banyak permintaan. Coba lagi sebentar." });
+    }
 
-    // Security Check: Only the original creator can update their puzzle
+    // Prefer Supabase as source of truth for existing puzzle
+    let existing: any = puzzlesCache.find((p) => p.id === puzzle.id) || null;
+    if (!existing) {
+      try {
+        const sbPuzzles = await fetchPuzzlesFromSupabase();
+        if (sbPuzzles) {
+          existing = sbPuzzles.find((p: any) => p.id === puzzle.id) || null;
+          if (existing) existing = normalizePuzzle(existing);
+        }
+      } catch { /* ignore */ }
+    }
+
+    const authUser = resolveAuthUser(req);
+
+    await ensureUserAccountsLoaded();
+    const authUserResolved = resolveAuthUser(req) || authUser;
+
+    // Security: update existing → must be author (strict)
     if (existing && existing.authorId) {
-      const incomingAuthorId = puzzle.authorId || req.headers['x-author-id'];
-      if (incomingAuthorId && existing.authorId !== incomingAuthorId) {
-        return res.status(403).json({
+      const check = assertPuzzleAuthor(existing, req);
+      if (!check.ok) {
+        return res.status(check.status).json({ success: false, message: check.message });
+      }
+    } else if (!existing) {
+      // New publish: require identity (verified auth OR local profile authorId on body)
+      if (!authUserResolved?.id && !puzzle.authorId) {
+        return res.status(401).json({
           success: false,
-          message: "Akses ditolak: Anda tidak memiliki izin untuk merubah teka-teki silang milik pemain lain.",
+          message: "Akses ditolak: login diperlukan untuk mempublikasikan teka-teki.",
         });
       }
     }
+
+    const now = Date.now();
+    const resolvedAuthorId =
+      (existing && existing.authorId) ||
+      (authUserResolved && authUserResolved.id) ||
+      puzzle.authorId ||
+      null;
 
     const updatedPuzzle = {
       ...puzzle,
       updatedAt: now,
       createdAt: puzzle.createdAt || (existing ? existing.createdAt : now),
-      authorId: puzzle.authorId || (existing ? existing.authorId : (req.headers['x-author-id'] as string)),
+      authorId: resolvedAuthorId,
+      authorName: puzzle.authorName || (authUserResolved && authUserResolved.name) || (existing && existing.authorName) || "Pemain TTS",
+      authorAvatar: puzzle.authorAvatar || (authUserResolved && authUserResolved.avatar) || (existing && existing.authorAvatar) || "🦊",
       isDraft: false,
       reactions: existing?.reactions || puzzle.reactions || {
         like: 0,
@@ -724,6 +915,7 @@ app.post("/api/puzzles", (req, res) => {
       comments: existing?.comments || puzzle.comments || [],
     };
 
+    const index = puzzlesCache.findIndex((p) => p.id === puzzle.id);
     if (index >= 0) {
       puzzlesCache[index] = updatedPuzzle;
     } else {
@@ -733,15 +925,17 @@ app.post("/api/puzzles", (req, res) => {
     writeJsonFile(PUZZLES_FILE, puzzlesCache);
     writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
 
-    // Asynchronously upsert to Supabase
-    upsertPuzzleToSupabase(updatedPuzzle).catch((err) => {
-      console.warn("[Supabase] Notice on saving puzzle:", err);
-    });
+    // Await Supabase upsert so serverless cold starts see the data
+    const ok = await upsertPuzzleToSupabase(updatedPuzzle);
+    if (!ok) {
+      console.warn("[Supabase] Upsert puzzle gagal (tetap disimpan lokal/cache):", puzzle.id);
+    }
 
     res.json({
       success: true,
       message: "Teka-teki berhasil dipublikasikan ke Cloud Database!",
       data: updatedPuzzle,
+      persisted: ok,
     });
   } catch (error: any) {
     console.error("Error saving puzzle:", error);
@@ -802,6 +996,14 @@ app.post("/api/puzzles/batch-sync", (req, res) => {
 app.post("/api/puzzles/:id/play", async (req, res) => {
   try {
     const { id } = req.params;
+    const ip = clientIp(req);
+    // Max 30 play events per IP per minute (client also dedupes per session)
+    if (!checkRateLimit(`play:${ip}:${id}`, 5, 60_000)) {
+      return res.status(429).json({ success: false, message: "Play sudah tercatat. Tunggu sebentar." });
+    }
+    if (!checkRateLimit(`play-ip:${ip}`, 40, 60_000)) {
+      return res.status(429).json({ success: false, message: "Terlalu banyak permintaan." });
+    }
     let puzzle = puzzlesCache.find((p) => p.id === id);
     if (!puzzle) {
       // Refresh from Supabase once
@@ -872,11 +1074,18 @@ app.post("/api/puzzles/:id/react", async (req, res) => {
   try {
     const { id } = req.params;
     const { reactionType, previousReaction, userId, userEmail } = req.body;
+    const ip = clientIp(req);
+    if (!checkRateLimit(`react:${ip}`, 30, 60_000)) {
+      return res.status(429).json({ success: false, message: "Terlalu banyak reaksi. Coba lagi sebentar." });
+    }
+
+    const authUser = resolveAuthUser(req);
     const authHeader = req.headers.authorization;
     const authorHeaderId = req.headers["x-author-id"] as string;
-    const effectiveUserId = userId || authorHeaderId;
+    const effectiveUserId = (authUser && authUser.id) || userId || authorHeaderId;
+    const effectiveEmail = (authUser && authUser.email) || userEmail;
 
-    if (!effectiveUserId && !userEmail && !authHeader) {
+    if (!effectiveUserId && !effectiveEmail && !authHeader) {
       return res.status(401).json({
         success: false,
         message: "Hanya pengguna yang sudah login yang dapat memberikan reaksi.",
@@ -884,7 +1093,7 @@ app.post("/api/puzzles/:id/react", async (req, res) => {
     }
 
     const validTypes = ["like", "laugh", "love", "think", "fire", "sad"];
-    const userKey = String(effectiveUserId || userEmail || "anon").toLowerCase();
+    const userKey = String(effectiveUserId || effectiveEmail || "anon").toLowerCase();
 
     // Ambil puzzle: memory → Supabase
     let puzzle = puzzlesCache.find((p) => p.id === id);
@@ -962,17 +1171,36 @@ app.post("/api/puzzles/:id/react", async (req, res) => {
 });
 
 
-// GET comments for a crossword puzzle
-app.get("/api/puzzles/:id/comments", (req, res) => {
-  const { id } = req.params;
-  const puzzle = puzzlesCache.find((p) => p.id === id);
-  if (!puzzle) {
-    return res.status(404).json({ success: false, message: "Teka-teki tidak ditemukan." });
+// GET comments for a crossword puzzle (Supabase-first when possible)
+app.get("/api/puzzles/:id/comments", async (req, res) => {
+  try {
+    const { id } = req.params;
+    let puzzle = puzzlesCache.find((p) => p.id === id);
+    if (!puzzle) {
+      try {
+        const sbPuzzles = await fetchPuzzlesFromSupabase();
+        if (sbPuzzles) {
+          const found = sbPuzzles.find((p: any) => p.id === id);
+          if (found) {
+            puzzle = normalizePuzzle(found);
+            const idx = puzzlesCache.findIndex((x) => x.id === id);
+            if (idx >= 0) puzzlesCache[idx] = puzzle;
+            else puzzlesCache.push(puzzle);
+            writeJsonFile(PUZZLES_FILE, puzzlesCache);
+          }
+        }
+      } catch { /* ignore */ }
+    }
+    if (!puzzle) {
+      return res.status(404).json({ success: false, message: "Teka-teki tidak ditemukan." });
+    }
+    res.json({
+      success: true,
+      data: puzzle.comments || [],
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Gagal memuat komentar." });
   }
-  res.json({
-    success: true,
-    data: puzzle.comments || [],
-  });
 });
 
 // POST add comment to a crossword puzzle
@@ -981,23 +1209,44 @@ app.post("/api/puzzles/:id/comments", async (req, res) => {
   try {
     const { id } = req.params;
     const { authorName, authorAvatar, authorId, authorEmail, content } = req.body;
+    const ip = clientIp(req);
+    if (!checkRateLimit(`comment:${ip}`, 10, 60_000)) {
+      return res.status(429).json({ success: false, message: "Terlalu banyak komentar. Coba lagi sebentar." });
+    }
+
+    const authUser = resolveAuthUser(req);
     const authHeader = req.headers.authorization;
     const authorHeaderId = req.headers['x-author-id'] as string;
-    const effectiveAuthorId = authorId || authorHeaderId;
+    const effectiveAuthorId = (authUser && authUser.id) || authorId || authorHeaderId;
+    const effectiveEmail = (authUser && authUser.email) || authorEmail;
 
-    // Requirement 3: Komentar dan reaksi hanya untuk pengguna yang sudah login
-    if (!effectiveAuthorId && !authorEmail && !authHeader) {
+    if (!effectiveAuthorId && !effectiveEmail && !authHeader) {
       return res.status(401).json({
         success: false,
         message: "Hanya pengguna yang sudah login yang dapat menulis komentar pada teka-teki silang.",
       });
     }
 
-    if (!content || !content.trim()) {
+    const cleanContent = sanitizeCommentContent(content);
+    if (!cleanContent) {
       return res.status(400).json({ success: false, message: "Isi komentar tidak boleh kosong." });
     }
 
-    const puzzle = puzzlesCache.find((p) => p.id === id);
+    let puzzle = puzzlesCache.find((p) => p.id === id);
+    if (!puzzle) {
+      try {
+        const sbPuzzles = await fetchPuzzlesFromSupabase();
+        if (sbPuzzles) {
+          const found = sbPuzzles.find((p: any) => p.id === id);
+          if (found) {
+            puzzle = normalizePuzzle(found);
+            const idx = puzzlesCache.findIndex((p) => p.id === id);
+            if (idx >= 0) puzzlesCache[idx] = puzzle;
+            else puzzlesCache.push(puzzle);
+          }
+        }
+      } catch { /* ignore */ }
+    }
     if (!puzzle) {
       return res.status(404).json({ success: false, message: "Teka-teki silang tidak ditemukan." });
     }
@@ -1006,14 +1255,20 @@ app.post("/api/puzzles/:id/comments", async (req, res) => {
       puzzle.comments = [];
     }
 
+    // Cap comments per puzzle to prevent unbounded growth
+    if (puzzle.comments.length >= 200) {
+      return res.status(400).json({ success: false, message: "Batas komentar untuk teka-teki ini sudah tercapai." });
+    }
+
+    const safeName = sanitizeCommentContent(authorName || (authUser && authUser.name) || "Pemain TTS").slice(0, 40) || "Pemain TTS";
     const newComment = {
       id: 'c_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6),
       puzzleId: id,
-      authorName: (authorName || 'Pemain TTS').trim(),
-      authorAvatar: authorAvatar || '🦊',
+      authorName: safeName,
+      authorAvatar: (authorAvatar || (authUser && authUser.avatar) || '🦊').toString().slice(0, 16),
       authorId: effectiveAuthorId || '',
-      authorEmail: authorEmail || '',
-      content: content.trim(),
+      authorEmail: effectiveEmail || '',
+      content: cleanContent,
       createdAt: Date.now(),
     };
 
@@ -1029,6 +1284,7 @@ app.post("/api/puzzles/:id/comments", async (req, res) => {
       message: "Komentar berhasil ditambahkan ke Teka-Teki Silang!",
       data: newComment,
       totalComments: puzzle.comments.length,
+      persisted: ok,
     });
   } catch (error) {
     console.error("Error adding comment to puzzle:", error);
@@ -1036,20 +1292,52 @@ app.post("/api/puzzles/:id/comments", async (req, res) => {
   }
 });
 
-// DELETE a comment from a crossword puzzle
-app.delete("/api/puzzles/:id/comments/:commentId", (req, res) => {
+// DELETE a comment from a crossword puzzle — only comment author, puzzle author, or admin
+app.delete("/api/puzzles/:id/comments/:commentId", async (req, res) => {
   try {
     const { id, commentId } = req.params;
-    const puzzle = puzzlesCache.find((p) => p.id === id);
+    let puzzle = puzzlesCache.find((p) => p.id === id);
+    if (!puzzle) {
+      try {
+        const sbPuzzles = await fetchPuzzlesFromSupabase();
+        if (sbPuzzles) {
+          const found = sbPuzzles.find((p: any) => p.id === id);
+          if (found) puzzle = normalizePuzzle(found);
+        }
+      } catch { /* ignore */ }
+    }
     if (!puzzle) {
       return res.status(404).json({ success: false, message: "Teka-teki tidak ditemukan." });
     }
 
-    if (puzzle.comments) {
-      puzzle.comments = puzzle.comments.filter((c: any) => c.id !== commentId);
-      writeJsonFile(PUZZLES_FILE, puzzlesCache);
-      upsertPuzzleToSupabase(puzzle).catch(() => {});
+    const comments: any[] = Array.isArray(puzzle.comments) ? puzzle.comments : [];
+    const target = comments.find((c) => c && c.id === commentId);
+    if (!target) {
+      return res.status(404).json({ success: false, message: "Komentar tidak ditemukan." });
     }
+
+    await ensureUserAccountsLoaded();
+    const user = resolveAuthUser(req);
+    const adminTok =
+      (req.headers.authorization || "").startsWith("Bearer ")
+        ? (req.headers.authorization as string).substring(7)
+        : (req.headers["x-admin-token"] as string) || "";
+    const isAdmin = !!(adminTok && verifyAdminToken(adminTok));
+    const isCommentAuthor = !!(user?.id && target.authorId && String(target.authorId) === user.id);
+    const isPuzzleAuthor = !!(user?.id && puzzle.authorId && String(puzzle.authorId) === user.id);
+
+    if (!isAdmin && !isCommentAuthor && !isPuzzleAuthor) {
+      return res.status(403).json({
+        success: false,
+        message: "Akses ditolak: hanya penulis komentar, pemilik teka-teki, atau admin yang dapat menghapus.",
+      });
+    }
+
+    puzzle.comments = comments.filter((c: any) => c.id !== commentId);
+    const idx = puzzlesCache.findIndex((p) => p.id === id);
+    if (idx >= 0) puzzlesCache[idx] = puzzle;
+    writeJsonFile(PUZZLES_FILE, puzzlesCache);
+    await upsertPuzzleToSupabase(puzzle).catch(() => {});
 
     res.json({ success: true, message: "Komentar berhasil dihapus." });
   } catch (error) {
@@ -1063,12 +1351,13 @@ app.delete("/api/puzzles/:id", async (req, res) => {
     const id = req.params.id;
     let puzzle = puzzlesCache.find((p) => p.id === id);
 
-    // If not in memory cache, still allow delete from Supabase (stale instance)
+    // Prefer Supabase as source of truth (handles stale serverless instances)
     if (!puzzle) {
       try {
         const sbPuzzles = await fetchPuzzlesFromSupabase();
         if (sbPuzzles) {
-          puzzle = sbPuzzles.find((p: any) => p.id === id) || null;
+          const found = sbPuzzles.find((p: any) => p.id === id);
+          if (found) puzzle = normalizePuzzle(found);
         }
       } catch {
         // ignore
@@ -1076,7 +1365,14 @@ app.delete("/api/puzzles/:id", async (req, res) => {
     }
 
     if (!puzzle) {
-      // Ensure Supabase row is gone even if caches differ across Vercel instances
+      // Puzzle already gone — require auth so random clients cannot probe deletes
+      const user = resolveAuthUser(req);
+      if (!user?.id) {
+        return res.status(401).json({
+          success: false,
+          message: "Akses ditolak: autentikasi diperlukan untuk menghapus teka-teki.",
+        });
+      }
       await deletePuzzleFromSupabase(id).catch(() => {});
       puzzlesCache = puzzlesCache.filter((p) => p.id !== id);
       writeJsonFile(PUZZLES_FILE, puzzlesCache);
@@ -1087,15 +1383,11 @@ app.delete("/api/puzzles/:id", async (req, res) => {
       return res.json({ success: true, message: "Teka-teki dihapus dari cloud database (jika ada)." });
     }
 
-    // Security Check: Only the original creator can delete their puzzle
-    if (puzzle.authorId) {
-      const requesterId = (req.headers['x-author-id'] as string) || (req.query.authorId as string);
-      if (requesterId && puzzle.authorId !== requesterId) {
-        return res.status(403).json({
-          success: false,
-          message: "Akses ditolak: Anda tidak memiliki izin untuk menghapus teka-teki silang buatan pemain lain.",
-        });
-      }
+    // STRICT: author must be authenticated and match (or admin)
+    await ensureUserAccountsLoaded();
+    const check = assertPuzzleAuthor(puzzle, req);
+    if (!check.ok) {
+      return res.status(check.status).json({ success: false, message: check.message });
     }
 
     puzzlesCache = puzzlesCache.filter((p) => p.id !== id);

@@ -566,16 +566,27 @@ export const CloudService = {
     invalidateCache(`comments:${puzzleId}`, 'community-puzzles', `puzzle:${puzzleId}`);
     StorageService.deletePuzzleComment(puzzleId, commentId);
     try {
+      const profile = StorageService.getUserProfile();
+      const headers: Record<string, string> = {
+        'Accept': 'application/json',
+        'x-author-id': profile.id || '',
+        'x-sync-key': profile.syncKey || '',
+      };
+      if (profile.authToken) {
+        headers['Authorization'] = `Bearer ${profile.authToken}`;
+      }
       const res = await fetch(`${API_BASE}/puzzles/${encodeURIComponent(puzzleId)}/comments/${encodeURIComponent(commentId)}`, {
         method: 'DELETE',
+        headers,
       });
       if (res.ok) {
         const json = await res.json();
         return !!json.success;
       }
+      return false;
     } catch (err) {
       console.error('Error deleting puzzle comment:', err);
     }
-    return true;
+    return false;
   },
 };
