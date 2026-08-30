@@ -764,7 +764,7 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
                     </button>
                     <span>•</span>
                     <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      {puzzle.clues.length} Soal ({puzzle.clues.filter((c) => c.direction === 'across').length}M, {puzzle.clues.filter((c) => c.direction === 'down').length}D)
+                      {(puzzle.clues?.length ?? 0)} Soal ({(puzzle.clues || []).filter((c) => c.direction === 'across').length}M, {(puzzle.clues || []).filter((c) => c.direction === 'down').length}D)
                     </span>
                   </div>
 

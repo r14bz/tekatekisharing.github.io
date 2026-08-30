@@ -488,8 +488,23 @@ function withPlayMetaEmbedded(puzzle: any): any {
 function normalizePuzzle(p: any): any {
   const play = extractPlayMeta(p);
   const urRaw = p.userReactions || p.user_reactions || {};
+  let clues = p.clues;
+  if (!Array.isArray(clues)) {
+    if (clues && typeof clues === "object") {
+      const across = Array.isArray(clues.across) ? clues.across : [];
+      const down = Array.isArray(clues.down) ? clues.down : [];
+      clues = [...across, ...down];
+    } else {
+      clues = [];
+    }
+  }
+  const grid = Array.isArray(p.grid) ? p.grid : [];
   return {
     ...p,
+    grid,
+    clues,
+    width: Number(p.width) || (grid[0] ? grid[0].length : 10) || 10,
+    height: Number(p.height) || grid.length || 10,
     reactions: p.reactions || {
       like: 0,
       laugh: 0,

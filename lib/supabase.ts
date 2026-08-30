@@ -323,18 +323,33 @@ export async function fetchPuzzlesFromSupabase(): Promise<any[] | null> {
     const puzzles = (data || []).map((row) => {
       // If data column is used or properties are flattened
       if (row.data && typeof row.data === "object") {
+        // row.data may only hold play-stats blob — always prefer flat columns for grid/clues
         return {
           ...row.data,
           id: row.id || row.data.id,
-          title: row.title || row.data.title,
-          authorName: row.author_name || row.authorName || row.data.authorName,
+          title: row.title || row.data.title || "Teka Teki Silang",
+          authorName: row.author_name || row.authorName || row.data.authorName || "Pemain TTS",
           authorId: row.author_id || row.authorId || row.data.authorId,
           authorAvatar: row.author_avatar || row.authorAvatar || row.data.authorAvatar || "🦊",
+          authorEmail: row.author_email || row.authorEmail || row.data.authorEmail,
+          customCode: row.custom_code || row.customCode || row.data.customCode || row.data.shareCode,
+          width: Number(row.width ?? row.data.width) || 10,
+          height: Number(row.height ?? row.data.height) || 10,
+          // CRITICAL: grid/clues live in dedicated columns; data blob often lacks them
+          grid: row.grid ?? row.data.grid ?? [],
+          clues: row.clues ?? row.data.clues ?? [],
           createdAt: Number(row.created_at || row.createdAt || row.data.createdAt) || Date.now(),
           updatedAt: Number(row.updated_at || row.updatedAt || row.data.updatedAt) || Date.now(),
-          reactions: row.reactions || row.data.reactions,
-          userReactions: row.user_reactions || row.userReactions || row.data.userReactions,
-          comments: row.comments || row.data.comments || [],
+          reactions: row.reactions || row.data.reactions || {
+            like: 0, laugh: 0, love: 0, think: 0, fire: 0, sad: 0,
+          },
+          comments: Array.isArray(row.comments)
+            ? row.comments
+            : Array.isArray(row.data.comments)
+              ? row.data.comments
+              : [],
+          isDraft: Boolean(row.is_draft ?? row.isDraft ?? row.data.isDraft),
+          isFeatured: Boolean(row.is_featured ?? row.isFeatured ?? row.data.isFeatured),
           playsCount: Number(
             row.plays_count ?? row.playsCount ?? row.data.playsCount ??
             (row.user_reactions && row.user_reactions.__ttsMeta && row.user_reactions.__ttsMeta.playsCount) ?? 0
@@ -373,8 +388,8 @@ export async function fetchPuzzlesFromSupabase(): Promise<any[] | null> {
         customCode: row.custom_code || row.customCode || row.share_code,
         width: Number(row.width) || 10,
         height: Number(row.height) || 10,
-        grid: row.grid,
-        clues: row.clues,
+        grid: row.grid ?? [],
+        clues: row.clues ?? [],
         createdAt: Number(row.created_at || row.createdAt) || Date.now(),
         updatedAt: Number(row.updated_at || row.updatedAt) || Date.now(),
         reactions: row.reactions || { like: 0, laugh: 0, love: 0, think: 0, fire: 0, sad: 0 },
