@@ -100,21 +100,41 @@ ALTER TABLE public.user_accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.leaderboard ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
--- 7. BUAT POLICY AKSES LENGKAP UNTUK ANON & AUTHENTICATED
+-- 7. POLICY AMAN
+-- Backend memakai SUPABASE_SERVICE_ROLE_KEY (bypass RLS).
+-- Kunci anon / publishable hanya boleh READ data publik.
+-- Jangan beri WRITE penuh ke anon key.
+
+-- Hapus policy lama yang terlalu terbuka
 DROP POLICY IF EXISTS "Public read puzzles" ON public.puzzles;
-CREATE POLICY "Public read puzzles" ON public.puzzles FOR SELECT USING (true);
-
 DROP POLICY IF EXISTS "Public insert/update puzzles" ON public.puzzles;
-CREATE POLICY "Public insert/update puzzles" ON public.puzzles FOR ALL USING (true) WITH CHECK (true);
-
 DROP POLICY IF EXISTS "Public read leaderboard" ON public.leaderboard;
-CREATE POLICY "Public read leaderboard" ON public.leaderboard FOR SELECT USING (true);
-
 DROP POLICY IF EXISTS "Public insert leaderboard" ON public.leaderboard;
-CREATE POLICY "Public insert leaderboard" ON public.leaderboard FOR ALL USING (true) WITH CHECK (true);
-
 DROP POLICY IF EXISTS "Public all user_accounts" ON public.user_accounts;
-CREATE POLICY "Public all user_accounts" ON public.user_accounts FOR ALL USING (true) WITH CHECK (true);
-
 DROP POLICY IF EXISTS "Public all profiles" ON public.profiles;
-CREATE POLICY "Public all profiles" ON public.profiles FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "anon_select_puzzles" ON public.puzzles;
+DROP POLICY IF EXISTS "anon_select_leaderboard" ON public.leaderboard;
+DROP POLICY IF EXISTS "anon_select_profiles" ON public.profiles;
+DROP POLICY IF EXISTS "anon_insert_leaderboard" ON public.leaderboard;
+
+-- Puzzles: publik hanya bisa baca non-draft
+CREATE POLICY "anon_select_puzzles" ON public.puzzles
+  FOR SELECT
+  USING (COALESCE(is_draft, false) = false);
+
+-- Leaderboard: publik baca saja
+CREATE POLICY "anon_select_leaderboard" ON public.leaderboard
+  FOR SELECT
+  USING (true);
+
+-- Profiles: publik baca field non-sensitif (tabel ini tidak menyimpan password)
+CREATE POLICY "anon_select_profiles" ON public.profiles
+  FOR SELECT
+  USING (true);
+
+-- user_accounts: TIDAK ada policy anon (deny by default saat RLS on)
+-- Semua write puzzles / accounts / comments dilakukan lewat backend + service_role.
+
+-- Catatan: jika Anda masih memakai anon key di server (tidak disarankan),
+-- sementara bisa menambah policy service-only lewat role supabase_admin.
+-- Pastikan env Vercel memakai SUPABASE_SERVICE_ROLE_KEY untuk backend.
