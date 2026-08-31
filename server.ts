@@ -854,9 +854,23 @@ app.get("/api/puzzles", async (req, res) => {
   const sorted = [...enriched]
     .filter((p) => p && !p.isDraft)
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+  // Lightweight list payload: omit full grid (hydrate via GET /api/puzzles/:id on play)
+  // Keep clues so community cards can show soal counts without a second request.
+  const light = sorted.map((p) => {
+    const { grid, ...rest } = p;
+    return {
+      ...rest,
+      // tiny marker so clients know detail may need hydration
+      grid: undefined,
+      hasFullGrid: Array.isArray(grid) && grid.length > 0,
+      cluesCount: Array.isArray(p.clues) ? p.clues.length : 0,
+    };
+  });
+
   res.json({
     success: true,
-    data: sorted,
+    data: light,
   });
 });
 

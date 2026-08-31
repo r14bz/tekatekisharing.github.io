@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { CrosswordPuzzle, UserProfile, GlobalAnnouncement } from './types/tts';
 import { StorageService } from './services/storageService';
 import { SyncService } from './services/syncService';
@@ -6,16 +6,32 @@ import { CloudService } from './services/cloudService';
 import { AdminService } from './services/adminService';
 import { Navbar, ActiveNavTab } from './components/Navbar';
 import { PlayerView } from './components/PlayerView';
-import { CreatorView } from './components/CreatorView';
 import { CommunityView } from './components/CommunityView';
 import { CreatorProfileView } from './components/CreatorProfileView';
 import { LeaderboardView } from './components/LeaderboardView';
-import { AdminView } from './components/AdminView';
 import { ShareModal } from './components/ShareModal';
 import { AccountSyncModal } from './components/AccountSyncModal';
 import { FooterStats } from './components/FooterStats';
+import { ToastHost, showToast } from './components/Toast';
 import { startRealtime } from './services/realtimeService';
-import { Megaphone, X } from 'lucide-react';
+import { Megaphone, X, Loader2 } from 'lucide-react';
+
+// Lazy-load heavy screens (admin + creator) to shrink initial bundle
+const CreatorView = lazy(() =>
+  import('./components/CreatorView').then((m) => ({ default: m.CreatorView }))
+);
+const AdminView = lazy(() =>
+  import('./components/AdminView').then((m) => ({ default: m.AdminView }))
+);
+
+function ViewFallback() {
+  return (
+    <div className="flex items-center justify-center min-h-[40vh] text-slate-500 gap-2 text-sm font-medium">
+      <Loader2 className="w-5 h-5 animate-spin" />
+      Memuat...
+    </div>
+  );
+}
 
 export default function App() {
   const [userProfile, setUserProfile] = useState<UserProfile>(() =>
@@ -181,10 +197,18 @@ export default function App() {
     }
   }, []);
 
-  const handlePlayPuzzle = (puzzle: CrosswordPuzzle) => {
+  const openLoginToast = (msg: string) => {
+    showToast(msg, 'auth', {
+      actionLabel: 'Login',
+      onAction: () => setIsSyncModalOpen(true),
+    });
+    setIsSyncModalOpen(true);
+  };
+
+  const handlePlayPuzzle = async (puzzle: CrosswordPuzzle) => {
     // Hanya user terdaftar yang boleh mengisi / memainkan TTS
     if (!userProfile.isLoggedIn) {
-      setIsSyncModalOpen(true);
+      openLoginToast('Login terlebih dahulu untuk memainkan TTS');
       return;
     }
     // Tutup profil kreator agar PlayerView bisa tampil (!viewingCreator)
@@ -196,16 +220,33 @@ export default function App() {
         }
       } catch { /* ignore */ }
     }
-    setCurrentPlayingPuzzle(puzzle);
-    StorageService.setActivePuzzleId(puzzle.id);
+
+    // List API may omit full grid — hydrate detail before play
+    let full = puzzle;
+    if (!Array.isArray(puzzle.grid) || puzzle.grid.length === 0) {
+      try {
+        const fetched = await CloudService.findPuzzleByCodeOrId(puzzle.id);
+        if (fetched && Array.isArray(fetched.grid) && fetched.grid.length > 0) {
+          full = fetched;
+        } else {
+          showToast('Data teka-teki tidak lengkap. Coba sync ulang.', 'error');
+          return;
+        }
+      } catch {
+        showToast('Gagal memuat teka-teki. Coba lagi.', 'error');
+        return;
+      }
+    }
+
+    setCurrentPlayingPuzzle(full);
+    StorageService.setActivePuzzleId(full.id);
     setActiveTab('play');
-    // Catat hitungan main ke server/Supabase (sekali per sesi per puzzle)
-    void CloudService.recordPuzzlePlay(puzzle.id);
+    void CloudService.recordPuzzlePlay(full.id);
   };
 
   const handleCreateNew = () => {
     if (!userProfile.isLoggedIn) {
-      setIsSyncModalOpen(true);
+      openLoginToast('Login terlebih dahulu untuk membuat TTS');
       return;
     }
     setEditingPuzzle(null);
@@ -214,7 +255,7 @@ export default function App() {
 
   const handleEditPuzzle = (puzzle: CrosswordPuzzle) => {
     if (!userProfile.isLoggedIn) {
-      setIsSyncModalOpen(true);
+      openLoginToast('Login terlebih dahulu untuk mengedit TTS');
       return;
     }
     setEditingPuzzle(puzzle);
@@ -290,14 +331,16 @@ export default function App() {
       {/* Main Content Area */}
       <main className="flex-1 w-full max-w-6xl mx-auto flex flex-col">
         {!viewingCreator && activeTab === 'admin' && (
-          <AdminView
-            onBackToApp={() => {
-              clearAdminSecretFromUrl();
-              setActiveTab('library');
-            }}
-            onPlayPuzzle={handlePlayPuzzle}
-            userProfile={userProfile}
-          />
+          <Suspense fallback={<ViewFallback />}>
+            <AdminView
+              onBackToApp={() => {
+                clearAdminSecretFromUrl();
+                setActiveTab('library');
+              }}
+              onPlayPuzzle={handlePlayPuzzle}
+              userProfile={userProfile}
+            />
+          </Suspense>
         )}
 
         {!viewingCreator && activeTab === 'play' && currentPlayingPuzzle && (
@@ -314,14 +357,17 @@ export default function App() {
         )}
 
         {!viewingCreator && activeTab === 'create' && (
-          <CreatorView
-            userProfile={userProfile}
-            initialPuzzle={editingPuzzle}
-            onSaveAndPlay={handleSaveAndPlay}
-            onOpenShareModal={handleOpenShareModal}
-            onOpenDrafts={handleOpenDrafts}
-            onBackToHome={() => setActiveTab('library')}
-          />
+          <Suspense fallback={<ViewFallback />}>
+            <CreatorView
+              userProfile={userProfile}
+              initialPuzzle={editingPuzzle}
+              onSaveAndPlay={handleSaveAndPlay}
+              onOpenShareModal={handleOpenShareModal}
+              onOpenDrafts={handleOpenDrafts}
+              onBackToHome={() => setActiveTab('library')}
+              onOpenSyncModal={() => setIsSyncModalOpen(true)}
+            />
+          </Suspense>
         )}
 
         {!viewingCreator && activeTab === 'library' && (
@@ -368,6 +414,7 @@ export default function App() {
         </main>
       )}
 
+      <ToastHost />
       <FooterStats />
 
       {/* Share Modal */}

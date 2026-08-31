@@ -25,6 +25,7 @@ import { generateCluesFromGrid, generatePuzzleId } from '../services/gridBuilder
 import { StorageService } from '../services/storageService';
 import { CloudService } from '../services/cloudService';
 import { SyncService } from '../services/syncService';
+import { showToast as showAppToast } from './Toast';
 
 interface CreatorViewProps {
   userProfile: UserProfile;
@@ -33,6 +34,7 @@ interface CreatorViewProps {
   onOpenShareModal: (puzzle: CrosswordPuzzle) => void;
   onOpenDrafts?: () => void;
   onBackToHome?: () => void;
+  onOpenSyncModal?: () => void;
 }
 
 export const CreatorView: React.FC<CreatorViewProps> = ({
@@ -42,6 +44,7 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
   onOpenShareModal,
   onOpenDrafts,
   onBackToHome,
+  onOpenSyncModal,
 }) => {
   const [gridSize, setGridSize] = useState<number>(initialPuzzle ? initialPuzzle.width : 7);
   const [title, setTitle] = useState(initialPuzzle ? initialPuzzle.title : 'TTS Baru');
@@ -500,21 +503,49 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
   };
 
   // Requirement #6: Publish & save to cloud database, then show custom code (no direct link)
-  const handlePublishAndSave = async () => {
+    const handlePublishAndSave = async () => {
+    if (!userProfile.isLoggedIn) {
+      showAppToast('Login terlebih dahulu untuk mempublikasikan TTS', 'auth', {
+        actionLabel: 'Login',
+        onAction: () => onOpenSyncModal?.(),
+      });
+      onOpenSyncModal?.();
+      return;
+    }
     const puzzle = validateAndBuildPuzzle();
     if (!puzzle) return;
     StorageService.saveMyPuzzle(puzzle);
-    setPublishedSuccessPuzzle(puzzle);
-    // Send to cloud database and perform full sync
     try {
-      await CloudService.publishPuzzle(puzzle);
+      const res = await CloudService.publishPuzzle(puzzle);
+      if (!res.success) {
+        const msg = res.message || 'Gagal mempublikasikan ke cloud.';
+        const needAuth = /login|akses ditolak|autentikasi/i.test(msg);
+        showAppToast(msg, needAuth ? 'auth' : 'error', needAuth ? {
+          actionLabel: 'Login',
+          onAction: () => onOpenSyncModal?.(),
+        } : undefined);
+        if (needAuth) onOpenSyncModal?.();
+        return;
+      }
       await SyncService.syncToCloud();
+      setPublishedSuccessPuzzle(puzzle);
+      showToast('TTS berhasil dipublikasikan ke komunitas!', 'success');
     } catch (e) {
       console.warn('Sync failed after publish:', e);
+      showAppToast('Gagal menghubungi server. TTS disimpan lokal.', 'warning');
+      setPublishedSuccessPuzzle(puzzle);
     }
   };
 
   const handleTestPlay = async () => {
+    if (!userProfile.isLoggedIn) {
+      showAppToast('Login terlebih dahulu untuk memainkan TTS', 'auth', {
+        actionLabel: 'Login',
+        onAction: () => onOpenSyncModal?.(),
+      });
+      onOpenSyncModal?.();
+      return;
+    }
     const puzzle = validateAndBuildPuzzle();
     if (!puzzle) return;
     StorageService.saveMyPuzzle(puzzle);
@@ -527,7 +558,7 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
     onSaveAndPlay(puzzle);
   };
 
-  const acrossClues = clues.filter((c) => c.direction === 'across');
+const acrossClues = clues.filter((c) => c.direction === 'across');
   const downClues = clues.filter((c) => c.direction === 'down');
   const isAcross = activeDirection === 'across';
 

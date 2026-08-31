@@ -7,6 +7,7 @@ import {
   ChevronUp,
   Lock,
 } from 'lucide-react';
+import { showToast } from './Toast';
 import { CrosswordPuzzle, PuzzleComment, PuzzleReactionType, PuzzleReactions, UserProfile } from '../types/tts';
 import { CloudService } from '../services/cloudService';
 import { StorageService } from '../services/storageService';
@@ -182,6 +183,10 @@ export const PuzzleInteractions: React.FC<PuzzleInteractionsProps> = ({
     if (!userProfile.isLoggedIn) {
       setLoginAlert('Login terlebih dahulu untuk memberikan reaksi');
       setTimeout(() => setLoginAlert(null), 3500);
+      showToast('Login terlebih dahulu untuk memberikan reaksi', 'auth', {
+        actionLabel: 'Login',
+        onAction: () => onOpenSyncModal?.(),
+      });
       if (onOpenSyncModal) {
         onOpenSyncModal();
       }
@@ -240,6 +245,10 @@ export const PuzzleInteractions: React.FC<PuzzleInteractionsProps> = ({
     if (!userProfile.isLoggedIn) {
       setLoginAlert('Login terlebih dahulu untuk menulis komentar');
       setTimeout(() => setLoginAlert(null), 3500);
+      showToast('Login terlebih dahulu untuk menulis komentar', 'auth', {
+        actionLabel: 'Login',
+        onAction: () => onOpenSyncModal?.(),
+      });
       if (onOpenSyncModal) {
         onOpenSyncModal();
       }
