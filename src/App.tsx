@@ -114,9 +114,12 @@ export default function App() {
 
   /**
    * Admin panel is NOT linked in the public UI.
-   * Open only via secret URL (bookmark this privately):
-   *   https://your-domain/#tts-admin
-   *   https://your-domain/?tts_admin=1
+   * Open via:
+   *   1) Klik logo TTS di navbar **5 kali cepat** (≤2 detik)
+   *   2) Secret URL (bookmark privat):
+   *        https://your-domain/#tts-admin
+   *        https://your-domain/?tts_admin=1
+   * Setelah panel terbuka, tetap wajib login admin (username + password env).
    */
   const openAdminFromSecretUrl = () => {
     setActiveTab('admin');

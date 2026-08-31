@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useCallback } from 'react';
 import {
   Grid,
   Trophy,
@@ -19,6 +19,10 @@ interface NavbarProps {
   onToggleTheme: () => void;
 }
 
+/** Klik logo 5x dalam window singkat → buka panel admin (tersembunyi) */
+const ADMIN_SECRET_CLICKS = 5;
+const ADMIN_SECRET_WINDOW_MS = 2000;
+
 export const Navbar: React.FC<NavbarProps> = ({
   activeTab,
   onTabChange,
@@ -27,18 +31,53 @@ export const Navbar: React.FC<NavbarProps> = ({
   theme,
   onToggleTheme,
 }) => {
+  const logoClicksRef = useRef<number[]>([]);
+
+  const handleLogoClick = useCallback(() => {
+    const now = Date.now();
+    // Keep only clicks within the time window
+    const recent = logoClicksRef.current.filter((t) => now - t < ADMIN_SECRET_WINDOW_MS);
+    recent.push(now);
+    logoClicksRef.current = recent;
+
+    if (recent.length >= ADMIN_SECRET_CLICKS) {
+      logoClicksRef.current = [];
+      // Set hash so refresh / bookmark also works, then open admin
+      try {
+        if (window.location.hash !== '#tts-admin') {
+          window.history.replaceState({}, '', window.location.pathname + window.location.search + '#tts-admin');
+        }
+      } catch {
+        /* ignore */
+      }
+      onTabChange('admin');
+      return;
+    }
+
+    // Single click (or incomplete sequence) → beranda seperti biasa
+    onTabChange('library');
+  }, [onTabChange]);
+
   return (
     <header
       id="main-navbar"
       className="sticky top-0 z-40 w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 shadow-xs transition-colors"
     >
       <div className="max-w-6xl mx-auto px-3 sm:px-5 h-14 flex items-center justify-between gap-2">
-        {/* Brand Logo */}
+        {/* Brand Logo — klik 5x cepat = pintu admin tersembunyi */}
         <div
           id="navbar-brand-logo"
-          onClick={() => onTabChange('library')}
+          onClick={handleLogoClick}
           className="flex items-center gap-2.5 cursor-pointer select-none group"
           title="Beranda Teka Teki Sharing"
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleLogoClick();
+            }
+          }}
         >
           <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 flex items-center justify-center text-white shadow-md shadow-indigo-500/20 group-hover:scale-105 transition-all">
             <span className="font-black font-mono text-sm tracking-tight">TTS</span>
