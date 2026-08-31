@@ -201,8 +201,16 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
     setSyncStatus(null);
     try {
       const result = await SyncService.syncToCloud(userProfile);
-      setSyncStatus(result.message);
-      onProfileUpdated({ ...userProfile, lastSyncedAt: Date.now() });
+      if (result.success) {
+        setSyncStatus(result.message);
+        // Hanya update lastSyncedAt kalau sync BENAR-BENAR berhasil —
+        // sebelumnya ini selalu dijalankan meski result.success === false,
+        // sehingga UI bisa menampilkan "tersinkron baru saja" padahal
+        // sinkronisasi sebenarnya gagal.
+        onProfileUpdated({ ...userProfile, lastSyncedAt: Date.now() });
+      } else {
+        setErrorMessage(result.message);
+      }
     } catch {
       setErrorMessage('Sinkronisasi cloud gagal. Periksa koneksi internet Anda.');
     } finally {

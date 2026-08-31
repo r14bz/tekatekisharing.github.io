@@ -763,17 +763,45 @@ export const StorageService = {
       if (cloudData.profile) {
         this.saveUserProfile(cloudData.profile);
       }
+      // PENTING: GABUNGKAN dengan data lokal, JANGAN timpa total.
+      // Sebelumnya localStorage.setItem(...) langsung menimpa seluruh
+      // MY_PUZZLES_KEY / DRAFTS_KEY dengan data cloud — kalau user membuat
+      // TTS sebagai tamu (belum login) lalu baru daftar/login, akun baru
+      // di cloud pasti kosong, sehingga TTS yang baru dibuat lokal itu
+      // langsung LENYAP tertimpa array kosong dari cloud. Sekarang: entri
+      // yang juga ada di cloud memakai versi cloud (otoritatif), tapi
+      // entri yang HANYA ada secara lokal (belum sempat ke-sync) tetap
+      // dipertahankan.
       if (Array.isArray(cloudData.puzzles)) {
-        localStorage.setItem(MY_PUZZLES_KEY, JSON.stringify(cloudData.puzzles));
+        let localPuzzles: CrosswordPuzzle[] = [];
+        try {
+          const raw = localStorage.getItem(MY_PUZZLES_KEY);
+          if (raw) localPuzzles = JSON.parse(raw);
+        } catch {}
+        const merged = new Map<string, CrosswordPuzzle>();
+        localPuzzles.forEach((p) => p && p.id && merged.set(p.id, p));
+        cloudData.puzzles.forEach((p) => p && p.id && merged.set(p.id, p));
+        localStorage.setItem(MY_PUZZLES_KEY, JSON.stringify(Array.from(merged.values())));
       }
       if (Array.isArray(cloudData.drafts)) {
-        localStorage.setItem(DRAFTS_KEY, JSON.stringify(cloudData.drafts));
+        let localDrafts: CrosswordPuzzle[] = [];
+        try {
+          const raw = localStorage.getItem(DRAFTS_KEY);
+          if (raw) localDrafts = JSON.parse(raw);
+        } catch {}
+        const merged = new Map<string, CrosswordPuzzle>();
+        localDrafts.forEach((p) => p && p.id && merged.set(p.id, p));
+        cloudData.drafts.forEach((p) => p && p.id && merged.set(p.id, p));
+        localStorage.setItem(DRAFTS_KEY, JSON.stringify(Array.from(merged.values())));
       }
       if (cloudData.progress) {
         const localProg = this.getAllProgress();
         const mergedProg = { ...localProg, ...cloudData.progress };
         localStorage.setItem(PROGRESS_MAP_KEY, JSON.stringify(mergedProg));
       }
+      // Kirim entri lokal yang tadi dipertahankan (belum ada di cloud) ke
+      // server, supaya benar-benar tersimpan permanen di akun ini.
+      this.triggerBackgroundAutoSync();
     } catch (e) {
       console.error('Failed to hydrate cloud data:', e);
     }

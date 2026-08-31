@@ -212,7 +212,7 @@ export const CloudService = {
   /**
    * Publishes a crossword puzzle to the shared cloud database
    */
-  async publishPuzzle(puzzle: CrosswordPuzzle): Promise<{ success: boolean; data?: CrosswordPuzzle; message?: string }> {
+  async publishPuzzle(puzzle: CrosswordPuzzle): Promise<{ success: boolean; data?: CrosswordPuzzle; message?: string; offline?: boolean }> {
     try {
       const profile = StorageService.getUserProfile();
       const res = await fetch(`${API_BASE}/puzzles`, {
@@ -238,8 +238,17 @@ export const CloudService = {
       return { success: false, message: json.message || 'Gagal menyimpan ke cloud.' };
     } catch (err: any) {
       console.error('Error publishing to cloud database:', err);
+      // PENTING: JANGAN klaim success:true di sini. Puzzle memang tersimpan
+      // lokal (di bawah), tapi belum tentu ada di cloud/Supabase — caller
+      // (CreatorView) perlu tahu ini via flag `offline` supaya bisa
+      // menampilkan pesan yang jujur, bukan modal "berhasil dipublikasikan".
       StorageService.saveMyPuzzle(puzzle);
-      return { success: true, data: puzzle, message: 'Tersimpan di lokal (sedang offline).' };
+      return {
+        success: false,
+        offline: true,
+        data: puzzle,
+        message: 'Tidak dapat terhubung ke server. TTS tersimpan di perangkat ini — belum bisa dimainkan pengguna lain.',
+      };
     }
   },
 
@@ -368,16 +377,17 @@ export const CloudService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ profile, puzzles, leaderboards }),
       });
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success) {
-          return { success: true, message: json.message || 'Sinkronisasi cloud database berhasil!' };
-        }
+      const json = await res.json().catch(() => null);
+      if (res.ok && json?.success) {
+        return { success: true, message: json.message || 'Sinkronisasi cloud database berhasil!' };
       }
+      // JANGAN klaim sukses kalau server tidak mengonfirmasi — lihat catatan
+      // yang sama di syncService.ts / cloudService.publishPuzzle.
+      return { success: false, message: json?.message || `Sinkronisasi gagal (status ${res.status}).` };
     } catch (err) {
       console.warn('Error during full cloud sync:', err);
+      return { success: false, message: 'Tidak dapat terhubung ke server. Data tersimpan di penyimpanan lokal.' };
     }
-    return { success: true, message: 'Data tersimpan di penyimpanan lokal.' };
   },
 
   /**

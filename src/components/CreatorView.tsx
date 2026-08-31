@@ -46,6 +46,14 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
   onBackToHome,
   onOpenSyncModal,
 }) => {
+  // PENTING: id puzzle dibuat SEKALI dan disimpan di ref, bukan dibuat
+  // ulang tiap kali handleSaveDraft/validateAndBuildPuzzle dipanggil.
+  // Sebelumnya `initialPuzzle?.id || generatePuzzleId()` dipanggil inline di
+  // tiap handler — kalau publish/save pertama gagal (mis. offline) lalu
+  // user coba lagi di sesi yang sama tanpa reload, id baru ter-generate
+  // lagi sehingga tercipta puzzle DUPLIKAT alih-alih memperbarui yang tadi.
+  const puzzleIdRef = useRef<string>(initialPuzzle?.id || generatePuzzleId());
+
   const [gridSize, setGridSize] = useState<number>(initialPuzzle ? initialPuzzle.width : 7);
   const [title, setTitle] = useState(initialPuzzle ? initialPuzzle.title : 'TTS Baru');
   const [authorName, setAuthorName] = useState(
@@ -405,7 +413,7 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
     const cleanCode = customCode.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
 
     const draftPuzzle: CrosswordPuzzle = {
-      id: initialPuzzle?.id || generatePuzzleId(),
+      id: puzzleIdRef.current,
       title: title.trim() || 'Draf TTS Tanpa Judul',
       description: description.trim(),
       authorName: authorName.trim() || userProfile.name,
@@ -487,7 +495,7 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
     const cleanCode = customCode.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
 
     const puzzle: CrosswordPuzzle = {
-      id: initialPuzzle?.id || generatePuzzleId(),
+      id: puzzleIdRef.current,
       title: title.trim(),
       description: description.trim(),
       authorName: authorName.trim(),
@@ -522,6 +530,14 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
     try {
       const res = await CloudService.publishPuzzle(puzzle);
       if (!res.success) {
+        if (res.offline) {
+          // Puzzle tersimpan lokal tapi belum sampai ke cloud — tampilkan
+          // modal jujur (bukan modal "berhasil dipublikasikan").
+          showAppToast(res.message || 'Gagal menghubungi server. TTS disimpan lokal — coba publikasikan ulang saat koneksi normal.', 'warning');
+          setPublishedLocallyOnly(true);
+          setPublishedSuccessPuzzle(puzzle);
+          return;
+        }
         const msg = res.message || 'Gagal mempublikasikan ke cloud.';
         const needAuth = /login|akses ditolak|autentikasi/i.test(msg);
         showAppToast(msg, needAuth ? 'auth' : 'error', needAuth ? {
