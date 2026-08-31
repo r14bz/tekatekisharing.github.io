@@ -1,6 +1,21 @@
 import { ClueItem, CrosswordPuzzle } from '../types/tts';
 
 /**
+ * Normalisasi clue id lama (`across-<nomor>-<r>-<c>`, memuat nomor urut
+ * yang bisa berubah tiap grid diedit) ke format baru berbasis posisi saja
+ * (`across-<r>-<c>`). Dipakai supaya soal yang sudah tersimpan di puzzle
+ * lama tetap cocok (tidak hilang) walau formatnya beda dari yang baru
+ * dihasilkan sekarang.
+ */
+function normalizeClueKey(key: string): string {
+  const legacyMatch = key.match(/^(across|down)-\d+-(\d+)-(\d+)$/);
+  if (legacyMatch) {
+    return `${legacyMatch[1]}-${legacyMatch[2]}-${legacyMatch[3]}`;
+  }
+  return key;
+}
+
+/**
  * Analyzes a 2D grid matrix of letters (or null for black blocks)
  * and generates all across and down clues with appropriate numbers.
  */
@@ -11,6 +26,12 @@ export function generateCluesFromGrid(
   const height = grid.length;
   if (height === 0) return { clues: [], cellNumbers: [] };
   const width = grid[0].length;
+
+  // Terima key format lama maupun baru dari caller.
+  const normalizedExistingMap = new Map<string, string>();
+  existingCluesMap.forEach((value, key) => {
+    normalizedExistingMap.set(normalizeClueKey(key), value);
+  });
 
   const cellNumbers: (number | null)[][] = Array.from({ length: height }, () =>
     Array(width).fill(null)
@@ -49,7 +70,13 @@ export function generateCluesFromGrid(
           ans += grid[r][c + len];
           len++;
         }
-        const clueKey = `across-${assignedNum}-${r}-${c}`;
+        // PENTING: id HANYA berbasis posisi (r,c), TIDAK menyertakan nomor
+        // urut. Sebelumnya id memakai `across-${assignedNum}-${r}-${c}` —
+        // begitu grid diedit (misal tambah blok hitam di baris sebelumnya)
+        // nomor urut clue di posisi ini bisa berubah, sehingga id berubah
+        // dan soal yang sudah diketik user untuk posisi itu hilang karena
+        // existingCluesMap.get(clueKey) tidak lagi menemukan entri lama.
+        const clueKey = `across-${r}-${c}`;
         clues.push({
           id: clueKey,
           number: assignedNum!,
@@ -58,7 +85,7 @@ export function generateCluesFromGrid(
           col: c,
           length: len,
           answer: ans.toUpperCase(),
-          question: existingCluesMap.get(clueKey) || '',
+          question: normalizedExistingMap.get(clueKey) || '',
         });
       }
 
@@ -70,7 +97,8 @@ export function generateCluesFromGrid(
           ans += grid[r + len][c];
           len++;
         }
-        const clueKey = `down-${assignedNum}-${r}-${c}`;
+        // Sama seperti across: id berbasis posisi saja, bukan nomor urut.
+        const clueKey = `down-${r}-${c}`;
         clues.push({
           id: clueKey,
           number: assignedNum!,
@@ -79,7 +107,7 @@ export function generateCluesFromGrid(
           col: c,
           length: len,
           answer: ans.toUpperCase(),
-          question: existingCluesMap.get(clueKey) || '',
+          question: normalizedExistingMap.get(clueKey) || '',
         });
       }
     }

@@ -90,6 +90,10 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'info' } | null>(null);
   const [publishedSuccessPuzzle, setPublishedSuccessPuzzle] = useState<CrosswordPuzzle | null>(null);
+  // true kalau publish ke Supabase gagal dan puzzle cuma tersimpan lokal —
+  // dipakai supaya modal sukses tidak mengklaim "bisa dimainkan pengguna
+  // lain" padahal belum benar-benar terkirim ke cloud.
+  const [publishedLocallyOnly, setPublishedLocallyOnly] = useState(false);
   const [savedDraftSuccess, setSavedDraftSuccess] = useState(false);
 
   const hiddenInputRef = useRef<HTMLInputElement | null>(null);
@@ -528,11 +532,13 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
         return;
       }
       await SyncService.syncToCloud();
+      setPublishedLocallyOnly(false);
       setPublishedSuccessPuzzle(puzzle);
       showToast('TTS berhasil dipublikasikan ke komunitas!', 'success');
     } catch (e) {
       console.warn('Sync failed after publish:', e);
-      showAppToast('Gagal menghubungi server. TTS disimpan lokal.', 'warning');
+      showAppToast('Gagal menghubungi server. TTS disimpan lokal — coba publikasikan ulang saat koneksi normal.', 'warning');
+      setPublishedLocallyOnly(true);
       setPublishedSuccessPuzzle(puzzle);
     }
   };
@@ -1126,10 +1132,19 @@ const acrossClues = clues.filter((c) => c.direction === 'across');
             </div>
 
             <h3 className="text-xl font-black text-slate-800 mb-1">
-              Teka-Teki Berhasil Di-Publish! 🎉
+              {publishedLocallyOnly ? 'Tersimpan di Perangkat Ini' : 'Teka-Teki Berhasil Di-Publish! 🎉'}
             </h3>
             <p className="text-xs text-slate-500 mb-5 leading-relaxed">
-              Teka-teki silang <strong>"{publishedSuccessPuzzle.title}"</strong> kini dapat dimainkan oleh semua pengguna lain di tab Komunitas.
+              {publishedLocallyOnly ? (
+                <>
+                  Teka-teki silang <strong>"{publishedSuccessPuzzle.title}"</strong> tersimpan di perangkat ini, tapi{' '}
+                  <strong>belum berhasil dikirim ke server</strong> sehingga belum bisa dimainkan pengguna lain. Cek koneksi internet Anda lalu coba publikasikan ulang.
+                </>
+              ) : (
+                <>
+                  Teka-teki silang <strong>"{publishedSuccessPuzzle.title}"</strong> kini dapat dimainkan oleh semua pengguna lain di tab Komunitas.
+                </>
+              )}
             </p>
 
             {/* Custom Code Box */}

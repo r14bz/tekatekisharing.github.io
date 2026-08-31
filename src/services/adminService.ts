@@ -323,9 +323,12 @@ export const AdminService = {
         message: res.ok ? 'Konfigurasi disimpan di cache lokal.' : `Server merespons status ${res.status}`,
       };
     } catch (err: any) {
+      // JANGAN klaim sukses — config belum tentu tersimpan di server,
+      // hanya di cache browser ini. Pola "selalu bilang sukses" ini pernah
+      // menyebabkan bug serupa di syncService.ts (lihat riwayat perbaikan).
       return {
-        success: true,
-        message: 'Konfigurasi disimpan di cache browser (server sedang offline).',
+        success: false,
+        message: 'Konfigurasi hanya tersimpan di cache browser ini — gagal menghubungi server (server offline/tidak terjangkau). Instance server lain TIDAK akan menerima config ini. Coba lagi saat koneksi normal, atau set lewat Vercel Environment Variables.',
       };
     }
   },
