@@ -394,9 +394,18 @@ export const CloudService = {
     StorageService.addLeaderboardEntry(fullEntry);
 
     try {
+      const profile = StorageService.getUserProfile();
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'x-author-id': profile.id || '',
+        'x-sync-key': profile.syncKey || '',
+      };
+      if (profile.authToken) {
+        headers['Authorization'] = `Bearer ${profile.authToken}`;
+      }
       const res = await fetch(`${API_BASE}/leaderboard/${encodeURIComponent(puzzleId)}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(fullEntry),
       });
       const json = await res.json();

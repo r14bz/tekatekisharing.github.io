@@ -31,6 +31,8 @@ import {
   Award,
   Compass,
   BookOpen,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { CrosswordPuzzle, PuzzleProgress, UserProfile } from '../types/tts';
 import { StorageService } from '../services/storageService';
@@ -309,6 +311,22 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
       );
     });
   }, [activeTab, communityPuzzles, myPuzzles, draftPuzzles, searchQuery]);
+
+  // Pagination: max 5 TTS per halaman
+  const PAGE_SIZE = 5;
+  const [listPage, setListPage] = useState(1);
+
+  useEffect(() => {
+    setListPage(1);
+  }, [activeTab, searchQuery]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredList.length / PAGE_SIZE));
+  const safePage = Math.min(listPage, totalPages);
+
+  const pagedList = useMemo(() => {
+    const start = (safePage - 1) * PAGE_SIZE;
+    return filteredList.slice(start, start + PAGE_SIZE);
+  }, [filteredList, safePage]);
 
   return (
     <div id="community-view-container" className="w-full max-w-5xl mx-auto p-3 sm:p-6 pb-20">
@@ -691,7 +709,7 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
       ) : (
         /* 🎴 COLORFUL & ELEGANT PUZZLE CARDS GRID */
         <div className="w-full max-w-full min-w-0 grid grid-cols-1 md:grid-cols-2 gap-4">
-          {filteredList.map((puzzle, index) => {
+          {pagedList.map((puzzle, index) => {
             const progress = progressMap[puzzle.id];
             const isCompleted = progress?.isCompleted;
             const hasProgress = progress && progress.userGrid && !isCompleted;
@@ -976,6 +994,60 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Pagination — max 5 TTS per halaman */}
+      {filteredList.length > PAGE_SIZE && (
+        <div
+          id="community-pagination"
+          className="mt-5 flex flex-col sm:flex-row items-center justify-between gap-3 px-1"
+        >
+          <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+            Menampilkan{" "}
+            <span className="font-bold text-slate-700 dark:text-slate-200">
+              {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filteredList.length)}
+            </span>{" "}
+            dari{" "}
+            <span className="font-bold text-slate-700 dark:text-slate-200">{filteredList.length}</span> TTS
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              id="btn-page-prev"
+              disabled={safePage <= 1}
+              onClick={() => setListPage((p) => Math.max(1, p - 1))}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" /> Sebelumnya
+            </button>
+            <div className="flex items-center gap-1">
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  id={`btn-page-${n}`}
+                  onClick={() => setListPage(n)}
+                  className={`min-w-[2rem] h-8 px-2 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                    n === safePage
+                      ? "bg-indigo-600 text-white shadow-sm"
+                      : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              id="btn-page-next"
+              disabled={safePage >= totalPages}
+              onClick={() => setListPage((p) => Math.min(totalPages, p + 1))}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              Berikutnya <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       )}
 

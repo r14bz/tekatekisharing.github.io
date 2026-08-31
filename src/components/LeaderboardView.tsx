@@ -1,5 +1,18 @@
-import React, { useState, useEffect } from 'react';
-import { Trophy, Clock, Zap, Filter, Sparkles, Award, Medal, Flame, Timer, Crown, ChevronRight } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  Trophy,
+  Clock,
+  Zap,
+  Filter,
+  Sparkles,
+  Award,
+  Medal,
+  Flame,
+  Timer,
+  Crown,
+  ChevronLeft,
+  ChevronRight,
+} from 'lucide-react';
 import { CrosswordPuzzle, LeaderboardEntry } from '../types/tts';
 import { formatTime, calculateScore, getSpeedCategory } from '../services/gridBuilder';
 import { StorageService } from '../services/storageService';
@@ -21,6 +34,20 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
   const [allPuzzles, setAllPuzzles] = useState<CrosswordPuzzle[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [realtimeTick, setRealtimeTick] = useState(0);
+  const LB_PAGE_SIZE = 10;
+  const [lbPage, setLbPage] = useState(1);
+
+  useEffect(() => {
+    setLbPage(1);
+  }, [selectedPuzzleId, leaderboardData.length]);
+
+  const lbTotalPages = Math.max(1, Math.ceil(leaderboardData.length / LB_PAGE_SIZE));
+  const lbSafePage = Math.min(lbPage, lbTotalPages);
+  const pagedLeaderboard = useMemo(() => {
+    const start = (lbSafePage - 1) * LB_PAGE_SIZE;
+    return leaderboardData.slice(start, start + LB_PAGE_SIZE);
+  }, [leaderboardData, lbSafePage]);
+
 
   useEffect(() => {
     const puzzles = StorageService.getCommunityPuzzles();
@@ -291,8 +318,8 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
           )}
 
           {/* List Entries */}
-          {leaderboardData.map((entry, index) => {
-            const rank = index + 1;
+          {pagedLeaderboard.map((entry, index) => {
+            const rank = (lbSafePage - 1) * LB_PAGE_SIZE + index + 1;
             const isTop1 = rank === 1;
             const isTop2 = rank === 2;
             const isTop3 = rank === 3;
@@ -396,6 +423,32 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
               </div>
             );
           })}
+
+          {leaderboardData.length > LB_PAGE_SIZE && (
+            <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+              <p className="text-xs text-slate-500 font-medium">
+                Halaman {lbSafePage} / {lbTotalPages} · {leaderboardData.length} rekor
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={lbSafePage <= 1}
+                  onClick={() => setLbPage((p) => Math.max(1, p - 1))}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-bold disabled:opacity-40 cursor-pointer"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" /> Prev
+                </button>
+                <button
+                  type="button"
+                  disabled={lbSafePage >= lbTotalPages}
+                  onClick={() => setLbPage((p) => Math.min(lbTotalPages, p + 1))}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-bold disabled:opacity-40 cursor-pointer"
+                >
+                  Next <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

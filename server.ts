@@ -1594,34 +1594,73 @@ app.get("/api/leaderboard/:puzzleId", async (req, res) => {
 });
 
 // POST submit a leaderboard entry — persist to Supabase first
+// Patch: wajib login, validasi timeMs, identitas dari auth (anti-cheat ringan)
 app.post("/api/leaderboard/:puzzleId", async (req, res) => {
   try {
     const puzzleId = req.params.puzzleId;
     const entry = req.body;
+    const ip = clientIp(req);
 
-    if (!entry || !entry.playerName || entry.timeMs === undefined) {
+    if (!checkRateLimit(`leaderboard:${ip}`, 20, 60_000)) {
+      return res.status(429).json({
+        success: false,
+        message: "Terlalu banyak kiriman skor. Coba lagi sebentar.",
+      });
+    }
+
+    await ensureUserAccountsLoaded();
+    const authUser = resolveAuthUser(req);
+    if (!authUser?.id) {
+      return res.status(401).json({
+        success: false,
+        message: "Login diperlukan untuk mengirim skor ke papan peringkat.",
+      });
+    }
+
+    if (!entry || entry.timeMs === undefined) {
       return res.status(400).json({ success: false, message: "Data skor tidak valid." });
     }
 
-    const timeMs = Math.max(1, Math.floor(Number(entry.timeMs) || 0));
-    if (!(timeMs > 0)) {
-      return res.status(400).json({ success: false, message: "Waktu pengerjaan tidak valid." });
+    const timeMs = Math.floor(Number(entry.timeMs) || 0);
+    // Anti-cheat ringan: terlalu cepat / terlalu lama ditolak
+    const MIN_TIME_MS = 3_000; // 3 detik
+    const MAX_TIME_MS = 24 * 60 * 60 * 1000; // 24 jam
+    if (!(timeMs >= MIN_TIME_MS)) {
+      return res.status(400).json({
+        success: false,
+        message: "Waktu pengerjaan tidak wajar (terlalu cepat).",
+      });
+    }
+    if (timeMs > MAX_TIME_MS) {
+      return res.status(400).json({
+        success: false,
+        message: "Waktu pengerjaan tidak wajar (terlalu lama).",
+      });
     }
 
     await ensureLeaderboardsFromSupabase();
 
+    const safeName =
+      String(authUser.name || entry.playerName || "Pemain TTS")
+        .trim()
+        .slice(0, 40) || "Pemain TTS";
+    const safeAvatar = String(
+      authUser.avatar || entry.playerAvatar || "🦊"
+    ).slice(0, 16);
+
     const newEntry = {
       id: entry.id || "lead_" + Math.random().toString(36).substring(2, 11),
       puzzleId,
-      playerName: String(entry.playerName).trim() || "Pemain TTS",
-      playerAvatar: entry.playerAvatar || "🦊",
-      playerId: entry.playerId || entry.userId || null,
-      playerEmail: entry.playerEmail || entry.email || null,
+      playerName: safeName,
+      playerAvatar: safeAvatar,
+      // Identitas selalu dari auth terverifikasi — jangan percaya body.playerId
+      playerId: authUser.id,
+      playerEmail: authUser.email || entry.playerEmail || entry.email || null,
       timeMs,
-      score: Math.max(0, Math.floor(Number(entry.score) || 1000)),
+      score: Math.min(999_999, Math.max(0, Math.floor(Number(entry.score) || 1000))),
       formattedTime: entry.formattedTime || null,
       completedAt: Number(entry.completedAt) || Date.now(),
-      puzzleTitle: entry.puzzleTitle || null,
+      puzzleTitle: entry.puzzleTitle ? String(entry.puzzleTitle).slice(0, 120) : null,
     };
 
     const saved = upsertLocalLeaderboardEntry(puzzleId, newEntry);
