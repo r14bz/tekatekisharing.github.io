@@ -896,3 +896,126 @@ export async function upsertProfileToSupabase(profile: any): Promise<boolean> {
     return false;
   }
 }
+
+
+/* ============================================================
+   PRESENCE (online users + total visits) — Supabase-backed
+   ============================================================ */
+
+const PRESENCE_ONLINE_TTL_MS = 60_000;
+const PRESENCE_CLEANUP_MS = 5 * 60_000;
+
+export async function upsertPresenceHeartbeat(params: {
+  clientId: string;
+  userId?: string | null;
+  name?: string | null;
+  avatar?: string | null;
+  countVisit?: boolean;
+}): Promise<{ online: number; totalVisits: number } | null> {
+  const client = getSupabase();
+  if (!client || !params.clientId) return null;
+
+  const now = Date.now();
+  const clientId = String(params.clientId).slice(0, 80);
+
+  try {
+    // 1) Upsert this client as online
+    const { error: upErr } = await client.from("presence").upsert(
+      {
+        client_id: clientId,
+        user_id: params.userId || null,
+        name: params.name || null,
+        avatar: params.avatar || null,
+        last_seen: now,
+      },
+      { onConflict: "client_id" }
+    );
+    if (upErr) {
+      console.warn("[presence] upsert error:", upErr.message);
+      return null;
+    }
+
+    // 2) Increment total visits once when requested
+    if (params.countVisit) {
+      // Try RPC-style atomic increment via read-modify-write on site_stats
+      const { data: row } = await client
+        .from("site_stats")
+        .select("value")
+        .eq("key", "total_visits")
+        .maybeSingle();
+
+      const current = Number(row?.value) || 0;
+      const next = current + 1;
+      const { error: stErr } = await client.from("site_stats").upsert(
+        {
+          key: "total_visits",
+          value: next,
+          updated_at: now,
+        },
+        { onConflict: "key" }
+      );
+      if (stErr) {
+        console.warn("[presence] site_stats upsert error:", stErr.message);
+      }
+    }
+
+    // 3) Best-effort cleanup of stale rows (older than 5 minutes)
+    try {
+      await client
+        .from("presence")
+        .delete()
+        .lt("last_seen", now - PRESENCE_CLEANUP_MS);
+    } catch {
+      /* ignore */
+    }
+
+    // 4) Count online
+    return await getPresenceStatsFromSupabase();
+  } catch (err) {
+    console.warn("[presence] heartbeat exception:", err);
+    return null;
+  }
+}
+
+export async function getPresenceStatsFromSupabase(): Promise<{
+  online: number;
+  totalVisits: number;
+} | null> {
+  const client = getSupabase();
+  if (!client) return null;
+
+  const now = Date.now();
+  const cutoff = now - PRESENCE_ONLINE_TTL_MS;
+
+  try {
+    const [onlineRes, visitsRes] = await Promise.all([
+      client
+        .from("presence")
+        .select("client_id", { count: "exact", head: true })
+        .gt("last_seen", cutoff),
+      client
+        .from("site_stats")
+        .select("value")
+        .eq("key", "total_visits")
+        .maybeSingle(),
+    ]);
+
+    const online = Number(onlineRes.count) || 0;
+    const totalVisits = Number(visitsRes.data?.value) || 0;
+
+    // If select failed hard, treat as unavailable
+    if (onlineRes.error && visitsRes.error) {
+      console.warn(
+        "[presence] stats error:",
+        onlineRes.error?.message,
+        visitsRes.error?.message
+      );
+      return null;
+    }
+
+    return { online, totalVisits };
+  } catch (err) {
+    console.warn("[presence] stats exception:", err);
+    return null;
+  }
+}

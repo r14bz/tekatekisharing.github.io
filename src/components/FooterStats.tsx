@@ -132,18 +132,22 @@ export const FooterStats: React.FC = () => {
 
     const sendHeartbeat = async (countVisit: boolean) => {
       try {
+        const profile = StorageService.getUserProfile();
         const res = await fetch('/api/presence/heartbeat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
           body: JSON.stringify({
             clientId: clientIdRef.current,
             countVisit,
+            userId: profile?.id || null,
+            name: profile?.name || null,
+            avatar: profile?.avatar || null,
           }),
         });
         if (!res.ok) return;
         const json = await res.json();
         if (!cancelled && json?.success) {
-          setStats({ online: Math.max(1, Number(json.online) || 1) });
+          setStats({ online: Math.max(0, Number(json.online) || 0) || 1 });
         }
       } catch {
         // silent

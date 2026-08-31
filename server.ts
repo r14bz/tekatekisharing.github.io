@@ -18,6 +18,8 @@ import {
   upsertProfileToSupabase,
   getRuntimeSupabaseConfig,
   saveRuntimeSupabaseConfig,
+  upsertPresenceHeartbeat,
+  getPresenceStatsFromSupabase,
 } from "./lib/supabase.js";
 
 const app = express();
@@ -626,43 +628,75 @@ async function initSupabaseData() {
 
 // --- CLOUD DATABASE API ROUTES ---
 
-// --- SITE PRESENCE (visits + online users) ---
-app.post("/api/presence/heartbeat", (req, res) => {
+// --- SITE PRESENCE (Supabase-backed; local /tmp only as emergency fallback) ---
+app.post("/api/presence/heartbeat", async (req, res) => {
   try {
     const clientId = String(req.body?.clientId || "").trim().slice(0, 80);
     const countVisit = Boolean(req.body?.countVisit);
+    const userId = req.body?.userId ? String(req.body.userId).slice(0, 80) : null;
+    const name = req.body?.name ? String(req.body.name).slice(0, 40) : null;
+    const avatar = req.body?.avatar ? String(req.body.avatar).slice(0, 16) : null;
     const now = Date.now();
 
+    if (!clientId) {
+      return res.status(400).json({ success: false, message: "clientId wajib." });
+    }
+
+    // Prefer Supabase (shared across all Vercel instances)
+    const sb = await upsertPresenceHeartbeat({
+      clientId,
+      userId,
+      name,
+      avatar,
+      countVisit,
+    });
+    if (sb) {
+      return res.json({
+        success: true,
+        totalVisits: sb.totalVisits,
+        online: Math.max(sb.online, 1),
+        source: "supabase",
+      });
+    }
+
+    // Fallback: in-memory + /tmp (single-instance only)
     if (!presenceStore.online) presenceStore.online = {};
     if (typeof presenceStore.totalVisits !== "number") presenceStore.totalVisits = 0;
-
-    if (clientId) {
-      presenceStore.online[clientId] = now;
-    }
+    presenceStore.online[clientId] = now;
     if (countVisit) {
       presenceStore.totalVisits = Math.max(0, presenceStore.totalVisits) + 1;
     }
-
     const online = pruneOnlineClients(now);
     persistPresence();
-
     res.json({
       success: true,
       totalVisits: presenceStore.totalVisits,
-      online: Math.max(online, clientId ? 1 : 0),
+      online: Math.max(online, 1),
+      source: "local-fallback",
     });
   } catch (err) {
+    console.warn("[presence] heartbeat error:", err);
     res.status(500).json({ success: false, message: "Gagal memperbarui presence." });
   }
 });
 
-app.get("/api/presence/stats", (req, res) => {
+app.get("/api/presence/stats", async (req, res) => {
   try {
+    const sb = await getPresenceStatsFromSupabase();
+    if (sb) {
+      return res.json({
+        success: true,
+        totalVisits: sb.totalVisits,
+        online: sb.online,
+        source: "supabase",
+      });
+    }
     const online = pruneOnlineClients();
     res.json({
       success: true,
       totalVisits: presenceStore.totalVisits || 0,
       online,
+      source: "local-fallback",
     });
   } catch (err) {
     res.status(500).json({ success: false, totalVisits: 0, online: 0 });
