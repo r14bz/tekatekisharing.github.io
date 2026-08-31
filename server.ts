@@ -286,10 +286,33 @@ function requireAdminAuth(req: express.Request, res: express.Response, next: exp
    SECURITY HELPERS: auth resolution, rate limit, sanitization
    ============================================================ */
 
-/** Ensure user accounts are loaded from Supabase (cold-start safe) */
-async function ensureUserAccountsLoaded(): Promise<void> {
+/**
+ * Ensure user accounts are loaded from Supabase (cold-start safe).
+ * IMPORTANT: only skipping the refetch when the cache is fully empty is not
+ * enough on Vercel — a "warm" instance can hold a partial cache from earlier
+ * requests that predates a brand-new registration/login on a different
+ * instance. When `req` is passed, we also force a refresh if the specific
+ * account this request claims to be isn't present yet.
+ */
+async function ensureUserAccountsLoaded(req?: express.Request): Promise<void> {
   try {
-    if (Object.keys(userAccountsCache).length > 0) return;
+    const cacheEmpty = Object.keys(userAccountsCache).length === 0;
+
+    let candidateMissing = false;
+    if (req) {
+      const authorId = String(req.headers["x-author-id"] || "").trim();
+      const authHeader = (req.headers.authorization || "") as string;
+      const bearer = authHeader.startsWith("Bearer ") ? authHeader.substring(7).trim() : "";
+      if (authorId && !userAccountsCache[authorId]) candidateMissing = true;
+      if (!candidateMissing && bearer && !bearer.startsWith("adm_")) {
+        const known = Object.values(userAccountsCache).some(
+          (acc: any) => acc && typeof acc === "object" && acc.authToken === bearer
+        );
+        if (!known) candidateMissing = true;
+      }
+    }
+
+    if (!cacheEmpty && !candidateMissing) return;
     const sbAccounts = await fetchUserAccountsFromSupabase();
     if (sbAccounts && Object.keys(sbAccounts).length > 0) {
       userAccountsCache = { ...userAccountsCache, ...sbAccounts };
@@ -930,7 +953,7 @@ app.post("/api/puzzles", async (req, res) => {
       } catch { /* ignore */ }
     }
 
-    await ensureUserAccountsLoaded();
+    await ensureUserAccountsLoaded(req);
     const authUserResolved = resolveAuthUser(req);
 
     // Security: update existing → must be verified author (strict)
@@ -1013,7 +1036,7 @@ app.post("/api/puzzles", async (req, res) => {
 
 // POST /api/puzzles/batch-sync: update existing puzzles only (NO insert of "missing" local copies).
 // Inserting arbitrary client puzzles revived deleted TTS; publish must go through POST /api/puzzles.
-app.post("/api/puzzles/batch-sync", (req, res) => {
+app.post("/api/puzzles/batch-sync", async (req, res) => {
   try {
     const { puzzles } = req.body;
     if (!Array.isArray(puzzles) || puzzles.length === 0) {
@@ -1021,6 +1044,9 @@ app.post("/api/puzzles/batch-sync", (req, res) => {
     }
 
     let updatedCount = 0;
+    let persistFailures = 0;
+    const toPersist: any[] = [];
+
     puzzles.forEach((p) => {
       if (p && p.id && p.title && !p.isDraft) {
         const idx = puzzlesCache.findIndex((x) => x.id === p.id);
@@ -1036,7 +1062,7 @@ app.post("/api/puzzles/batch-sync", (req, res) => {
           comments: puzzlesCache[idx].comments || p.comments || [],
         };
         updatedCount++;
-        upsertPuzzleToSupabase(puzzlesCache[idx]).catch(() => {});
+        toPersist.push(puzzlesCache[idx]);
       }
     });
 
@@ -1045,11 +1071,28 @@ app.post("/api/puzzles/batch-sync", (req, res) => {
       writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
     }
 
+    // AWAITED — previously fire-and-forget (.catch(() => {})), which on
+    // serverless risked being cut off before the write reached Supabase.
+    for (const p of toPersist) {
+      try {
+        const ok = await upsertPuzzleToSupabase(p);
+        if (!ok) persistFailures++;
+      } catch (e) {
+        console.warn("[batch-sync] puzzle upsert to Supabase failed:", p.id, e);
+        persistFailures++;
+      }
+    }
+
     res.json({
-      success: true,
+      success: persistFailures === 0,
       addedCount: 0,
       updatedCount,
       totalCount: puzzlesCache.length,
+      persistFailures,
+      message:
+        persistFailures > 0
+          ? `${persistFailures} dari ${toPersist.length} puzzle gagal dikonfirmasi ke Supabase.`
+          : undefined,
     });
   } catch (err) {
     console.error("Error batch syncing puzzles:", err);
@@ -1147,7 +1190,7 @@ app.post("/api/puzzles/:id/react", async (req, res) => {
       return res.status(429).json({ success: false, message: "Terlalu banyak reaksi. Coba lagi sebentar." });
     }
 
-    await ensureUserAccountsLoaded();
+    await ensureUserAccountsLoaded(req);
     // H2: only trust verified auth — never body.userId / bare x-author-id
     const authUser = resolveAuthUser(req);
     if (!authUser?.id) {
@@ -1280,7 +1323,7 @@ app.post("/api/puzzles/:id/comments", async (req, res) => {
       return res.status(429).json({ success: false, message: "Terlalu banyak komentar. Coba lagi sebentar." });
     }
 
-    await ensureUserAccountsLoaded();
+    await ensureUserAccountsLoaded(req);
     // Only trust verified auth — never body.authorId alone
     const authUser = resolveAuthUser(req);
     if (!authUser?.id) {
@@ -1381,7 +1424,7 @@ app.delete("/api/puzzles/:id/comments/:commentId", async (req, res) => {
       return res.status(404).json({ success: false, message: "Komentar tidak ditemukan." });
     }
 
-    await ensureUserAccountsLoaded();
+    await ensureUserAccountsLoaded(req);
     const user = resolveAuthUser(req);
     const adminTok =
       (req.headers.authorization || "").startsWith("Bearer ")
@@ -1431,6 +1474,7 @@ app.delete("/api/puzzles/:id", async (req, res) => {
 
     if (!puzzle) {
       // Puzzle already gone — require auth so random clients cannot probe deletes
+      await ensureUserAccountsLoaded(req);
       const user = resolveAuthUser(req);
       if (!user?.id) {
         return res.status(401).json({
@@ -1449,7 +1493,7 @@ app.delete("/api/puzzles/:id", async (req, res) => {
     }
 
     // STRICT: author must be authenticated and match (or admin)
-    await ensureUserAccountsLoaded();
+    await ensureUserAccountsLoaded(req);
     const check = assertPuzzleAuthor(puzzle, req);
     if (check.ok === false) {
       return res.status(check.status).json({ success: false, message: check.message });
@@ -1595,6 +1639,29 @@ app.get("/api/leaderboard/:puzzleId", async (req, res) => {
 
 // POST submit a leaderboard entry — persist to Supabase first
 // Patch: wajib login, validasi timeMs, identitas dari auth (anti-cheat ringan)
+// Mirrors src/services/gridBuilder.ts calculateScore() — MUST stay identical
+// so client-side score preview matches what the server actually stores.
+function calculateScoreServer(timeMs: number, cellsCount: number = 25): number {
+  if (timeMs <= 0) return 0;
+  const seconds = Math.max(1, Math.floor(timeMs / 1000));
+  const basePoints = Math.max(1500, cellsCount * 120);
+  const speedBonus = Math.max(100, Math.round(180000 / (seconds + 20)));
+  const finalScore = basePoints + speedBonus;
+  return Math.max(250, finalScore);
+}
+
+function countFilledCells(grid: any): number {
+  if (!Array.isArray(grid)) return 25;
+  let count = 0;
+  for (const row of grid) {
+    if (!Array.isArray(row)) continue;
+    for (const cell of row) {
+      if (cell !== null && cell !== "") count++;
+    }
+  }
+  return count > 0 ? count : 25;
+}
+
 app.post("/api/leaderboard/:puzzleId", async (req, res) => {
   try {
     const puzzleId = req.params.puzzleId;
@@ -1608,7 +1675,7 @@ app.post("/api/leaderboard/:puzzleId", async (req, res) => {
       });
     }
 
-    await ensureUserAccountsLoaded();
+    await ensureUserAccountsLoaded(req);
     const authUser = resolveAuthUser(req);
     if (!authUser?.id) {
       return res.status(401).json({
@@ -1648,6 +1715,20 @@ app.post("/api/leaderboard/:puzzleId", async (req, res) => {
       authUser.avatar || entry.playerAvatar || "🦊"
     ).slice(0, 16);
 
+    // Skor TIDAK dipercaya dari client — dihitung ulang di server dari timeMs
+    // + jumlah sel terisi pada puzzle asli (mencegah skor palsu/inflasi).
+    let puzzleForScore = puzzlesCache.find((p) => p.id === puzzleId);
+    if (!puzzleForScore) {
+      try {
+        const sbPuzzles = await fetchPuzzlesFromSupabase();
+        puzzleForScore = sbPuzzles?.find((p: any) => p.id === puzzleId);
+      } catch {
+        // ignore — fallback default cellsCount below
+      }
+    }
+    const cellsCount = countFilledCells(puzzleForScore?.grid);
+    const computedScore = calculateScoreServer(timeMs, cellsCount);
+
     const newEntry = {
       id: entry.id || "lead_" + Math.random().toString(36).substring(2, 11),
       puzzleId,
@@ -1657,7 +1738,7 @@ app.post("/api/leaderboard/:puzzleId", async (req, res) => {
       playerId: authUser.id,
       playerEmail: authUser.email || entry.playerEmail || entry.email || null,
       timeMs,
-      score: Math.min(999_999, Math.max(0, Math.floor(Number(entry.score) || 1000))),
+      score: computedScore,
       formattedTime: entry.formattedTime || null,
       completedAt: Number(entry.completedAt) || Date.now(),
       puzzleTitle: entry.puzzleTitle ? String(entry.puzzleTitle).slice(0, 120) : null,
@@ -1787,46 +1868,92 @@ app.post("/api/profile", (req, res) => {
 });
 
 // POST full database sync
-app.post("/api/sync", (req, res) => {
+app.post("/api/sync", async (req, res) => {
   try {
     const { profile, puzzles, leaderboards } = req.body;
+    // Track whether every Supabase write actually succeeded — the response
+    // must reflect real persistence, not just the in-memory/tmp cache.
+    let allPersisted = true;
 
-    // 1. Sync profile
+    // 1. Sync profile — AWAITED so the write finishes before we respond
+    // (fire-and-forget here previously risked being cut off on serverless).
     if (profile && profile.id) {
       profilesCache[profile.id] = { ...profile, updatedAt: Date.now() };
       if (profile.syncKey) profilesCache[profile.syncKey] = profilesCache[profile.id];
       writeJsonFile(PROFILES_FILE, profilesCache);
+      try {
+        const ok = await upsertProfileToSupabase(profilesCache[profile.id]);
+        if (!ok) allPersisted = false;
+      } catch (e) {
+        console.warn("[sync] profile upsert to Supabase failed:", e);
+        allPersisted = false;
+      }
     }
 
-    // 2. Merge uploaded puzzles
+    // 2. Merge uploaded puzzles — AWAITED, actually persisted to Supabase now
     if (Array.isArray(puzzles)) {
+      const toPersist: any[] = [];
       puzzles.forEach((p) => {
         if (p && p.id && !p.isDraft) {
           const idx = puzzlesCache.findIndex((x) => x.id === p.id);
           if (idx >= 0) {
             puzzlesCache[idx] = { ...puzzlesCache[idx], ...p };
+            toPersist.push(puzzlesCache[idx]);
           } else {
             puzzlesCache.unshift(p);
+            toPersist.push(p);
           }
         }
       });
       writeJsonFile(PUZZLES_FILE, puzzlesCache);
+
+      for (const p of toPersist) {
+        try {
+          const ok = await upsertPuzzleToSupabase(p);
+          if (!ok) allPersisted = false;
+        } catch (e) {
+          console.warn("[sync] puzzle upsert to Supabase failed:", p.id, e);
+          allPersisted = false;
+        }
+      }
     }
 
-    // 3. Merge leaderboards
+    // 3. Merge leaderboards — AWAITED, actually persisted to Supabase now
     if (leaderboards && typeof leaderboards === 'object') {
-      Object.entries(leaderboards).forEach(([pId, entries]) => {
-        if (Array.isArray(entries)) {
-          if (!leaderboardsCache[pId]) leaderboardsCache[pId] = [];
-          entries.forEach((e: any) => {
-            if (e && e.playerName && !leaderboardsCache[pId].some((x) => x.id === e.id)) {
-              leaderboardsCache[pId].push(e);
-            }
-          });
-          leaderboardsCache[pId].sort((a, b) => (b.score || 0) - (a.score || 0) || (a.timeMs || 0) - (b.timeMs || 0));
+      for (const [pId, entries] of Object.entries(leaderboards)) {
+        if (!Array.isArray(entries)) continue;
+        if (!leaderboardsCache[pId]) leaderboardsCache[pId] = [];
+        const newOnes: any[] = [];
+        for (const e of entries as any[]) {
+          if (e && e.playerName && !leaderboardsCache[pId].some((x) => x.id === e.id)) {
+            leaderboardsCache[pId].push(e);
+            newOnes.push(e);
+          }
         }
-      });
+        leaderboardsCache[pId].sort((a, b) => (b.score || 0) - (a.score || 0) || (a.timeMs || 0) - (b.timeMs || 0));
+
+        for (const e of newOnes) {
+          try {
+            const result = await insertLeaderboardEntryToSupabase(pId, e);
+            if (!result || !(result as any).ok) allPersisted = false;
+          } catch (err) {
+            console.warn("[sync] leaderboard entry upsert to Supabase failed:", pId, e.id, err);
+            allPersisted = false;
+          }
+        }
+      }
       writeJsonFile(LEADERBOARDS_FILE, leaderboardsCache);
+    }
+
+    if (!allPersisted) {
+      // Data is safe in the server's local cache but NOT fully confirmed in
+      // Supabase yet — tell the client honestly instead of claiming success.
+      return res.status(207).json({
+        success: false,
+        message: "Sebagian data tersimpan di server, tapi gagal dikonfirmasi ke Supabase. Coba sinkronisasi ulang.",
+        cloudPuzzlesCount: puzzlesCache.length,
+        timestamp: Date.now(),
+      });
     }
 
     res.json({
@@ -2265,7 +2392,24 @@ app.post("/api/auth/auto-sync", async (req, res) => {
     if (account.id) userAccountsCache[account.id] = account;
     writeJsonFile(USER_ACCOUNTS_FILE, userAccountsCache);
 
-    upsertUserAccountToSupabase(account).catch(() => {});
+    // AWAITED — previously fire-and-forget (.catch(() => {})). On a
+    // serverless function the process can freeze right after res.json(),
+    // silently dropping this write before it reached Supabase.
+    let persisted = true;
+    try {
+      persisted = Boolean(await upsertUserAccountToSupabase(account));
+    } catch (e) {
+      console.warn("[auto-sync] upsert to Supabase failed:", cleanEmail, e);
+      persisted = false;
+    }
+
+    if (!persisted) {
+      return res.status(207).json({
+        success: false,
+        message: "Data tersimpan sementara di server, tapi gagal dikonfirmasi ke Supabase. Coba lagi.",
+        lastSyncedAt: account.lastSyncedAt,
+      });
+    }
 
     res.json({
       success: true,
@@ -2464,7 +2608,7 @@ app.post("/api/admin/supabase-config", requireAdminAuth, async (req, res) => {
     res.json({
       success: true,
       message: status.connected
-        ? "Konfigurasi Supabase berhasil disimpan dan terhubung!"
+        ? "Konfigurasi Supabase berhasil disimpan dan terhubung untuk instance ini. PENTING: penyimpanan ini sementara (di /tmp) dan tidak dibagi ke instance serverless lain di Vercel — untuk hasil permanen & konsisten di semua instance, set SUPABASE_URL & SUPABASE_SERVICE_ROLE_KEY di Vercel → Settings → Environment Variables, lalu redeploy."
         : "Konfigurasi disimpan, namun host Supabase belum merespons: " + (status.error || "Periksa kembali URL & Key"),
       status,
     });

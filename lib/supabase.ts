@@ -88,8 +88,14 @@ export function getRuntimeSupabaseConfig(): { url: string; key: string } {
     ""
   );
 
-  const finalUrl = runtimeUrl || envUrl || cleanString(defaultSbConfig?.url);
-  const finalKey = runtimeKey || envKey || cleanString(defaultSbConfig?.key);
+  // PENTING: Environment Variables Vercel diprioritaskan di atas config
+  // Admin Panel. Config dari Admin Panel disimpan di /tmp yang bersifat
+  // sementara & tidak dibagi antar instance serverless — kalau runtime
+  // config lebih diprioritaskan, sebuah instance "warm" dengan config lama
+  // (misal dari percobaan sebelum env var di-set dengan benar) bisa terus
+  // menimpa env var yang sudah benar sampai instance itu cold-start.
+  const finalUrl = envUrl || runtimeUrl || cleanString(defaultSbConfig?.url);
+  const finalKey = envKey || runtimeKey || cleanString(defaultSbConfig?.key);
 
   return {
     url: finalUrl,

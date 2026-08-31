@@ -157,12 +157,18 @@ export const SyncService = {
     userProfile.lastSyncedAt = Date.now();
     StorageService.saveUserProfile(userProfile);
 
-    try {
-      const myPuzzles = StorageService.getMyPuzzles();
-      const leaderboards = StorageService.getAllLeaderboards();
-      const drafts = StorageService.getDraftPuzzles();
-      const progress = StorageService.getAllProgress();
+    const myPuzzles = StorageService.getMyPuzzles();
+    const leaderboards = StorageService.getAllLeaderboards();
+    const drafts = StorageService.getDraftPuzzles();
+    const progress = StorageService.getAllProgress();
 
+    // Data disimpan ke localStorage terlebih dulu (di atas) sehingga tidak
+    // hilang walau kedua request cloud di bawah gagal.
+    let syncOk = false;
+    let autoSyncOk = false;
+    let errorMessage = '';
+
+    try {
       const res = await fetch('/api/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -172,9 +178,17 @@ export const SyncService = {
           leaderboards,
         }),
       });
+      const json = await res.json().catch(() => null);
+      syncOk = res.ok && Boolean(json?.success);
+      if (!syncOk) errorMessage = json?.message || `Sinkronisasi gagal (status ${res.status}).`;
+    } catch (e) {
+      errorMessage = 'Tidak dapat terhubung ke server. Data hanya tersimpan di perangkat ini.';
+    }
 
-      // Also sync to cloud account if logged in
-      fetch('/api/auth/auto-sync', {
+    // AWAITED (bukan fire-and-forget) — ini yang benar-benar menyimpan
+    // puzzles/drafts/progress akun ke Supabase lewat user_accounts.
+    try {
+      const res2 = await fetch('/api/auth/auto-sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -183,22 +197,29 @@ export const SyncService = {
           drafts,
           progress,
         }),
-      }).catch(() => {});
-
-      if (res.ok) {
-        const json = await res.json();
-        return {
-          success: true,
-          message: json.message || `Data Anda berhasil disinkronisasi pada ${new Date().toLocaleTimeString('id-ID')}`,
-        };
+      });
+      const json2 = await res2.json().catch(() => null);
+      autoSyncOk = res2.ok && Boolean(json2?.success);
+      if (!autoSyncOk && !errorMessage) {
+        errorMessage = json2?.message || `Auto-sync akun gagal (status ${res2.status}).`;
       }
     } catch (e) {
-      // Local sync fallback
+      if (!errorMessage) {
+        errorMessage = 'Tidak dapat terhubung ke server. Data hanya tersimpan di perangkat ini.';
+      }
     }
 
+    if (syncOk || autoSyncOk) {
+      return {
+        success: true,
+        message: `Data Anda berhasil disinkronisasi ke cloud pada ${new Date().toLocaleTimeString('id-ID')}`,
+      };
+    }
+
+    // Jujur ke user: data belum tentu ada di cloud, jangan klaim "berhasil".
     return {
-      success: true,
-      message: `Data Anda berhasil disinkronisasi pada ${new Date().toLocaleTimeString('id-ID')}`,
+      success: false,
+      message: errorMessage || 'Sinkronisasi ke cloud gagal. Data Anda tetap aman di perangkat ini, coba lagi nanti.',
     };
   },
 
@@ -241,11 +262,21 @@ export const SyncService = {
             message: json.message,
           };
         }
+        // Server benar-benar merespons (bukan network error) tapi menolak
+        // login — laporkan apa adanya. JANGAN lanjut ke fallback lokal,
+        // karena itu akan membuat akun "bayangan" yang tidak pernah
+        // tersimpan di Supabase dan tidak bisa dipakai login di device lain.
+        return {
+          success: false,
+          message: json.message || 'Login Google gagal.',
+        };
       }
     } catch (e: any) {
       console.warn('Google server API unreachable, using client decode fallback:', e);
     }
 
+    // Fallback ini HANYA untuk kondisi backend benar-benar tidak terjangkau
+    // (fetch melempar exception, atau respons bukan JSON sama sekali).
     // Client-side JWT Decoder fallback (for static hosting on Vercel)
     try {
       const parts = credential.split('.');
@@ -335,11 +366,18 @@ export const SyncService = {
             message: json.message,
           };
         }
+        // Respons nyata dari server (bukan network error) — jangan lanjut ke
+        // fallback lokal, laporkan kegagalan apa adanya.
+        return {
+          success: false,
+          message: json.message || 'Login Google gagal.',
+        };
       }
     } catch (e: any) {
       console.warn('Google server API unreachable, fetching userinfo directly:', e);
     }
 
+    // Fallback ini HANYA untuk kondisi backend benar-benar tidak terjangkau.
     // Direct Google UserInfo fetch client-side fallback
     try {
       const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
@@ -448,11 +486,22 @@ export const SyncService = {
             isExistingEmail: true,
           };
         }
+        // Server benar-benar merespons (misal 500/503 karena Supabase gagal
+        // menyimpan) — laporkan apa adanya. JANGAN lanjut ke fallback lokal:
+        // itu akan membuat akun "bayangan" hanya di localStorage yang tidak
+        // pernah tersimpan di Supabase dan tidak bisa dipakai login dari
+        // device/browser lain.
+        return {
+          success: false,
+          message: json.message || 'Gagal membuat akun. Coba lagi beberapa saat.',
+        };
       }
     } catch (e) {
       console.warn('Backend register API not reachable, falling back to local secure storage:', e);
     }
 
+    // Fallback ini HANYA untuk kondisi backend benar-benar tidak terjangkau
+    // (fetch melempar exception / respons bukan JSON sama sekali).
     // 2. Resilient Client-Side Account Storage (Vercel static host)
     try {
       const localAccounts = getLocalAccounts();
@@ -556,11 +605,22 @@ export const SyncService = {
             errorType: json.errorType || (res.status === 401 ? 'wrong_password' : 'account_not_found'),
           };
         }
+        // Server benar-benar merespons (misal 429/500) tapi bukan kasus
+        // wrong_password/account_not_found — JANGAN lanjut ke pengecekan
+        // akun lokal, karena browser ini mungkin belum pernah menyimpan
+        // akun tsb secara lokal dan akan salah melaporkan "akun tidak
+        // ditemukan" padahal akun aslinya ada di server.
+        return {
+          success: false,
+          message: json.message || 'Login gagal. Coba lagi beberapa saat.',
+          errorType: json.errorType,
+        };
       }
     } catch (e) {
       console.warn('Backend login API not reachable, falling back to local secure storage:', e);
     }
 
+    // Fallback ini HANYA untuk kondisi backend benar-benar tidak terjangkau.
     // 2. Resilient Client-Side Account Storage (Vercel static host)
     try {
       const localAccounts = getLocalAccounts();
