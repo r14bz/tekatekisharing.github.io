@@ -172,8 +172,11 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBackToApp, onPlayPuzzle 
       }
       await loadAllAdminData();
     } catch (err: any) {
-      showNotification('Konfigurasi disimpan di penyimpanan lokal browser.', 'success');
-      setShowSupabaseConfigModal(false);
+      // JANGAN klaim sukses di sini — exception yang sampai kemari berarti
+      // ada kegagalan nyata (AdminService.updateSupabaseConfig sendiri
+      // sudah menangani error jaringan secara internal dan mengembalikan
+      // {success:false}, jadi catch ini hanya untuk error tak terduga).
+      showNotification('Gagal menyimpan konfigurasi Supabase. Coba lagi.', 'error');
     } finally {
       setIsSavingSupabase(false);
     }

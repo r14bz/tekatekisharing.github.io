@@ -40,6 +40,7 @@ import { SyncService } from '../services/syncService';
 import { CloudService } from '../services/cloudService';
 import { formatTimeShort } from '../services/gridBuilder';
 import { PuzzleInteractions } from './PuzzleInteractions';
+import { showToast } from './Toast';
 
 interface CommunityViewProps {
   userProfile: UserProfile;
@@ -277,8 +278,24 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
   const handleConfirmDelete = async () => {
     if (!puzzleToDelete) return;
     if (puzzleToDelete.type === 'my') {
-      StorageService.deleteMyPuzzle(puzzleToDelete.id);
-      await CloudService.deletePuzzle(puzzleToDelete.id);
+      // Simpan salinan dulu untuk rollback kalau hapus di server gagal —
+      // CloudService.deletePuzzle() menghapus dari localStorage secara
+      // OPTIMISTIC sebelum request ke server selesai. Sebelumnya kalau
+      // request itu gagal (offline/ditolak server), puzzle sudah hilang
+      // dari perangkat user tapi TETAP ADA & terlihat publik di komunitas
+      // — pemiliknya tidak akan tahu dan tidak bisa mencoba hapus lagi.
+      const backup = myPuzzles.find((p) => p.id === puzzleToDelete.id) || null;
+      const res = await CloudService.deletePuzzle(puzzleToDelete.id);
+      if (!res.success) {
+        if (backup) StorageService.saveMyPuzzle(backup);
+        showToast(
+          res.message || 'Gagal menghapus dari server. TTS dikembalikan ke daftar "Punya Saya" — coba lagi.',
+          'error'
+        );
+        setPuzzleToDelete(null);
+        loadData(true);
+        return;
+      }
     } else {
       StorageService.deleteDraftPuzzle(puzzleToDelete.id);
     }
