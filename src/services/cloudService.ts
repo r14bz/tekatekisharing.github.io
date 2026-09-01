@@ -575,7 +575,15 @@ export const CloudService = {
       console.error('Error adding comment to puzzle:', err);
     }
 
-    return localComment;
+    // PENTING: JANGAN kembalikan localComment di sini seolah berhasil.
+    // Sebelumnya fungsi ini selalu return `localComment` walau request ke
+    // server gagal/ditolak — caller (PuzzleInteractions.tsx) menganggap
+    // itu sukses dan menampilkan komentar seolah terkirim, padahal
+    // komentar itu HANYA ada di localStorage device ini: hilang saat
+    // reload dan tidak pernah terlihat oleh user lain. Balikkan optimistic
+    // local save tadi dan kembalikan null supaya caller tahu ini gagal.
+    StorageService.deletePuzzleComment(puzzleId, localComment.id);
+    return null;
   },
 
   /**

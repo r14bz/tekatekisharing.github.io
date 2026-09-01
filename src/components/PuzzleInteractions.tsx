@@ -297,9 +297,20 @@ export const PuzzleInteractions: React.FC<PuzzleInteractionsProps> = ({
       );
       if (saved) {
         setComments((prev) => prev.map((c) => (c.id === tempComment.id ? saved : c)));
+      } else {
+        // Gagal tersimpan di server — batalkan komentar optimistic tadi
+        // (kalau tetap ditampilkan, komentar itu hanya ada di localStorage
+        // device ini: hilang saat reload dan tidak pernah terlihat user lain).
+        setComments((prev) => prev.filter((c) => c.id !== tempComment.id));
+        if (onUpdatePuzzle) {
+          onUpdatePuzzle({ ...puzzle, comments: comments.filter((c) => c.id !== tempComment.id) });
+        }
+        showToast('Gagal mengirim komentar ke server. Coba lagi.', 'error');
       }
     } catch (err) {
       console.error('Failed to post comment:', err);
+      setComments((prev) => prev.filter((c) => c.id !== tempComment.id));
+      showToast('Gagal mengirim komentar ke server. Coba lagi.', 'error');
     } finally {
       setIsSubmittingComment(false);
     }
@@ -307,6 +318,8 @@ export const PuzzleInteractions: React.FC<PuzzleInteractionsProps> = ({
 
   const handleDeleteComment = async (commentId: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    // Simpan salinan dulu untuk rollback kalau hapus di server gagal.
+    const backup = comments.find((c) => c.id === commentId) || null;
     const nextComments = comments.filter((c) => c.id !== commentId);
     setComments(nextComments);
     if (onUpdatePuzzle) {
@@ -315,7 +328,16 @@ export const PuzzleInteractions: React.FC<PuzzleInteractionsProps> = ({
         comments: nextComments,
       });
     }
-    await CloudService.deletePuzzleComment(puzzle.id, commentId);
+    const ok = await CloudService.deletePuzzleComment(puzzle.id, commentId);
+    if (!ok && backup) {
+      // Gagal dihapus di server — kembalikan supaya tidak "hilang sendiri"
+      // dari sisi pemilik komentar padahal masih ada & terlihat orang lain.
+      setComments((prev) => [...prev, backup].sort((a, b) => a.createdAt - b.createdAt));
+      if (onUpdatePuzzle) {
+        onUpdatePuzzle({ ...puzzle, comments: [...nextComments, backup] });
+      }
+      showToast('Gagal menghapus komentar di server. Coba lagi.', 'error');
+    }
   };
 
   const formatTimeAgo = (timestamp: number) => {

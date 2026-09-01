@@ -115,13 +115,19 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
     const totalReactions = creatorPuzzles.reduce((s, p) => {
       const r = p.reactions;
       if (!r) return s;
+      // PENTING: field reaksi asli (lihat types/tts.ts PuzzleReactionType)
+      // adalah like/laugh/love/think/fire/sad — sebelumnya kode ini
+      // menjumlahkan like/love/fire/clap/wow (clap & wow TIDAK PERNAH ada
+      // di skema, sementara laugh/think/sad terlewat) sehingga statistik
+      // "Total Reaksi" di profil kreator selalu under-count.
       return (
         s +
         (r.like || 0) +
+        (r.laugh || 0) +
         (r.love || 0) +
+        (r.think || 0) +
         (r.fire || 0) +
-        (r.clap || 0) +
-        (r.wow || 0)
+        (r.sad || 0)
       );
     }, 0);
     const featured = creatorPuzzles.filter((p) => p.isFeatured).length;

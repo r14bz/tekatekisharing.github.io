@@ -68,8 +68,17 @@ export default function App() {
       if (!hash.startsWith('creator/')) return;
       const key = decodeURIComponent(hash.slice('creator/'.length)).trim();
       if (!key) return;
-      // Prefer id-like keys; name used as fallback label
-      const looksLikeId = key.startsWith('u_') || key.length > 20 || key.includes('-');
+      // Prefer id-like keys; name used as fallback label.
+      // PENTING: id user di aplikasi ini SELALU berformat 'usr_xxxxx' atau
+      // 'usr_g_xxxxx' (lihat storageService.ts/syncService.ts), BUKAN
+      // 'u_xxxxx'. Heuristik lama mengecek prefix 'u_' (salah — tidak
+      // pernah cocok dengan ID asli), panjang >20 (ID asli cuma ~11
+      // karakter), atau tanda '-' (ID asli tidak pernah mengandung '-').
+      // Akibatnya SEMUA link "Bagikan Profil" (yang memakai id asli)
+      // salah terdeteksi sebagai "nama", sehingga matchesCreator() di
+      // CreatorProfileView.tsx tidak pernah menemukan TTS milik kreator
+      // tsb — profil yang dibagikan selalu tampak kosong bagi orang lain.
+      const looksLikeId = key.startsWith('usr_') || key.length > 20 || key.includes('-');
       setViewingCreator({
         id: looksLikeId ? key : undefined,
         name: looksLikeId ? 'Kreator' : key,
@@ -348,6 +357,7 @@ export default function App() {
 
         {!viewingCreator && activeTab === 'play' && currentPlayingPuzzle && (
           <PlayerView
+            key={`player-view-${currentPlayingPuzzle.id}`}
             puzzle={currentPlayingPuzzle}
             userProfile={userProfile}
             onBack={() => setActiveTab('library')}
