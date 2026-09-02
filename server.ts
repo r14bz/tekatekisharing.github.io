@@ -1445,9 +1445,20 @@ app.delete("/api/puzzles/:id/comments/:commentId", async (req, res) => {
     const idx = puzzlesCache.findIndex((p) => p.id === id);
     if (idx >= 0) puzzlesCache[idx] = puzzle;
     writeJsonFile(PUZZLES_FILE, puzzlesCache);
-    await upsertPuzzleToSupabase(puzzle).catch(() => {});
+    // PENTING: cek hasil upsert ke Supabase. Sebelumnya selalu
+    // res.json({success:true}) TANPA PEDULI hasil upsert ini — akibatnya
+    // fix rollback di client (PuzzleInteractions.tsx) tidak pernah
+    // terpicu untuk kegagalan Supabase, karena server sendiri berbohong
+    // bilang sukses. Komentar yang gagal terhapus di Supabase akan
+    // MUNCUL LAGI begitu puzzle di-fetch ulang.
+    const persisted = await upsertPuzzleToSupabase(puzzle).catch(() => false);
 
-    res.json({ success: true, message: "Komentar berhasil dihapus." });
+    res.json({
+      success: persisted,
+      message: persisted
+        ? "Komentar berhasil dihapus."
+        : "Gagal menyimpan penghapusan komentar ke Supabase. Coba lagi.",
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: "Gagal menghapus komentar." });
   }
@@ -1503,14 +1514,26 @@ app.delete("/api/puzzles/:id", async (req, res) => {
     writeJsonFile(PUZZLES_FILE, puzzlesCache);
     writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
 
-    await deletePuzzleFromSupabase(id).catch(() => {});
+    // PENTING: cek hasil delete di Supabase — sebelumnya selalu
+    // res.json({success:true}) TANPA PEDULI hasilnya. Ini adalah rute
+    // yang jadi dasar rollback-on-failure di CommunityView.tsx
+    // (handleConfirmDelete) — kalau server berbohong bilang sukses,
+    // rollback client itu TIDAK PERNAH terpicu untuk kegagalan Supabase
+    // asli, dan puzzle akan tetap live & publik walau pemiliknya
+    // mengira sudah terhapus.
+    const deletedFromSupabase = await deletePuzzleFromSupabase(id).catch(() => false);
 
     if (leaderboardsCache[id]) {
       delete leaderboardsCache[id];
       writeJsonFile(LEADERBOARDS_FILE, leaderboardsCache);
     }
 
-    res.json({ success: true, message: "Teka-teki dan peringkat terkait berhasil dihapus dari cloud database." });
+    res.json({
+      success: deletedFromSupabase,
+      message: deletedFromSupabase
+        ? "Teka-teki dan peringkat terkait berhasil dihapus dari cloud database."
+        : "Gagal menghapus teka-teki dari Supabase. Coba lagi.",
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: "Gagal menghapus teka-teki." });
   }
@@ -1762,9 +1785,15 @@ app.post("/api/leaderboard/:puzzleId", async (req, res) => {
           puzzlesCache[pIdx] = withPlayMetaEmbedded(puzzlesCache[pIdx]);
           writeJsonFile(PUZZLES_FILE, puzzlesCache);
           writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
-          upsertPuzzleToSupabase(puzzlesCache[pIdx]).catch((e) =>
-            console.warn("[leaderboard] Gagal upsert completionsCount ke Supabase:", puzzleId, e)
-          );
+          // Di-await (bukan fire-and-forget) untuk konsistensi dengan
+          // perbaikan serupa di seluruh file ini — kalau gagal, backfill
+          // (POST /api/admin/backfill-completions) tetap akan
+          // memperbaikinya nanti karena entri leaderboard-nya sendiri
+          // sudah berhasil tersimpan (dihitung ulang dari sana).
+          const completionsPersisted = await upsertPuzzleToSupabase(puzzlesCache[pIdx]).catch(() => false);
+          if (!completionsPersisted) {
+            console.warn("[leaderboard] Gagal upsert completionsCount ke Supabase (akan self-heal via backfill):", puzzleId);
+          }
         }
       } catch (e) {
         console.warn("[leaderboard] Gagal increment completionsCount:", puzzleId, e);
@@ -1824,7 +1853,7 @@ app.get("/api/profile/:key", (req, res) => {
 });
 
 // POST save / update user profile
-app.post("/api/profile", (req, res) => {
+app.post("/api/profile", async (req, res) => {
   try {
     const profile = req.body;
     if (!profile || !profile.id || !profile.name) {
@@ -1880,11 +1909,18 @@ app.post("/api/profile", (req, res) => {
       } catch { /* ignore */ }
     }
 
-    upsertProfileToSupabase(updatedProfile).catch(() => {});
+    // PENTING: cek hasil upsert profil ke Supabase — sebelumnya
+    // `.catch(() => {})` fire-and-forget lalu tetap klaim
+    // "berhasil disimpan ke cloud database" walau gagal. Perubahan nama/
+    // avatar bisa terlihat sukses di UI padahal sebenarnya tidak
+    // tersimpan permanen (hilang saat instance serverless cold-start).
+    const profilePersisted = await upsertProfileToSupabase(updatedProfile).catch(() => false);
 
     res.json({
-      success: true,
-      message: "Profil berhasil disimpan ke cloud database!",
+      success: profilePersisted,
+      message: profilePersisted
+        ? "Profil berhasil disimpan ke cloud database!"
+        : "Profil tersimpan sementara di server, tapi gagal dikonfirmasi ke Supabase. Coba lagi.",
       data: updatedProfile,
       cascaded: { puzzles: touchedPuzzles, leaderboard: touchedLb },
     });
@@ -2124,7 +2160,24 @@ app.post("/api/auth/google", async (req, res) => {
     userAccountsCache[account.id] = account;
     writeJsonFile(USER_ACCOUNTS_FILE, userAccountsCache);
 
-    upsertUserAccountToSupabase(account).catch(() => {});
+    // AWAITED — sebelumnya fire-and-forget (.catch(() => {})) lalu tetap
+    // klaim sukses tanpa syarat, sama seperti bug yang sudah diperbaiki
+    // di register-email/login-email/auto-sync. (Catatan: rute Google
+    // login ini saat ini belum dipanggil dari UI manapun, tapi tetap
+    // diperbaiki untuk konsistensi kalau diaktifkan nanti.)
+    let googlePersisted = true;
+    try {
+      googlePersisted = Boolean(await upsertUserAccountToSupabase(account));
+    } catch {
+      googlePersisted = false;
+    }
+
+    if (!googlePersisted) {
+      return res.status(207).json({
+        success: false,
+        message: "Login berhasil, tapi gagal menyimpan akun ke Supabase. Coba lagi.",
+      });
+    }
 
     res.json({
       success: true,
@@ -2752,7 +2805,7 @@ app.get("/api/admin/users", requireAdminAuth, async (req, res) => {
 });
 
 // 6. Admin - Update User (Ban/Unban, Edit Info, Reset Stats)
-app.put("/api/admin/users/:id", requireAdminAuth, (req, res) => {
+app.put("/api/admin/users/:id", requireAdminAuth, async (req, res) => {
   try {
     const userId = req.params.id;
     const { isBanned, name, totalSolved, totalCreated } = req.body;
@@ -2782,16 +2835,26 @@ app.put("/api/admin/users/:id", requireAdminAuth, (req, res) => {
     if (targetAcc.googleId) userAccountsCache[`google_${targetAcc.googleId}`] = targetAcc;
     writeJsonFile(USER_ACCOUNTS_FILE, userAccountsCache);
 
-    upsertUserAccountToSupabase(targetAcc).catch(() => {});
+    // PENTING: cek hasil upsert ke Supabase — sebelumnya fire-and-forget
+    // lalu tetap klaim sukses. Kalau gagal, perubahan (ban/nama/stats)
+    // hanya ada di cache instance ini dan bisa "hilang" begitu instance
+    // lain/cold-start menangani request berikutnya.
+    const userPersisted = await upsertUserAccountToSupabase(targetAcc).catch(() => false);
 
-    res.json({ success: true, message: "Data pengguna berhasil diperbarui.", data: targetAcc });
+    res.json({
+      success: userPersisted,
+      message: userPersisted
+        ? "Data pengguna berhasil diperbarui."
+        : "Perubahan tersimpan sementara, tapi gagal dikonfirmasi ke Supabase. Coba lagi.",
+      data: targetAcc,
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: "Gagal memperbarui data pengguna." });
   }
 });
 
 // 7. Admin - Reset User Password
-app.post("/api/admin/users/:id/reset-password", requireAdminAuth, (req, res) => {
+app.post("/api/admin/users/:id/reset-password", requireAdminAuth, async (req, res) => {
   try {
     const userId = req.params.id;
     const { newPassword } = req.body;
@@ -2823,9 +2886,19 @@ app.post("/api/admin/users/:id/reset-password", requireAdminAuth, (req, res) => 
     if (targetAcc.email) userAccountsCache[targetAcc.email.toLowerCase()] = targetAcc;
     writeJsonFile(USER_ACCOUNTS_FILE, userAccountsCache);
 
-    upsertUserAccountToSupabase(targetAcc).catch(() => {});
+    // PENTING: kalau upsert ke Supabase gagal di sini dan tetap dilaporkan
+    // "berhasil", admin akan mengira password sudah direset padahal
+    // Supabase masih menyimpan hash password LAMA — user tidak akan bisa
+    // login dengan password baru dari instance/browser lain. Ini bug yang
+    // cukup membingungkan kalau tidak jujur dilaporkan.
+    const pwPersisted = await upsertUserAccountToSupabase(targetAcc).catch(() => false);
 
-    res.json({ success: true, message: `Kata sandi untuk akun ${targetAcc.email || targetAcc.name} berhasil direset!` });
+    res.json({
+      success: pwPersisted,
+      message: pwPersisted
+        ? `Kata sandi untuk akun ${targetAcc.email || targetAcc.name} berhasil direset!`
+        : `Gagal menyimpan password baru ke Supabase untuk ${targetAcc.email || targetAcc.name}. Coba lagi.`,
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: "Gagal mereset kata sandi pengguna." });
   }
@@ -2870,7 +2943,7 @@ app.get("/api/admin/puzzles", requireAdminAuth, async (req, res) => {
 });
 
 // 10. Admin - Toggle Feature Puzzle (Pilihan Editor)
-app.post("/api/admin/puzzles/:id/toggle-feature", requireAdminAuth, (req, res) => {
+app.post("/api/admin/puzzles/:id/toggle-feature", requireAdminAuth, async (req, res) => {
   const pId = req.params.id;
   const idx = puzzlesCache.findIndex((p) => p.id === pId);
   if (idx === -1) {
@@ -2881,17 +2954,22 @@ app.post("/api/admin/puzzles/:id/toggle-feature", requireAdminAuth, (req, res) =
   puzzlesCache[idx].updatedAt = Date.now();
 
   writeJsonFile(PUZZLES_FILE, puzzlesCache);
-  upsertPuzzleToSupabase(puzzlesCache[idx]).catch(() => {});
+  // PENTING: cek hasil upsert — sebelumnya fire-and-forget lalu tetap
+  // klaim sukses, jadi status "Pilihan Editor" bisa tidak konsisten
+  // antar instance kalau upsert ke Supabase sebenarnya gagal.
+  const featurePersisted = await upsertPuzzleToSupabase(puzzlesCache[idx]).catch(() => false);
 
   res.json({
-    success: true,
-    message: puzzlesCache[idx].isFeatured ? "Teka-teki ditandai sebagai Pilihan Editor ⭐" : "Tanda Pilihan Editor dihapus.",
+    success: featurePersisted,
+    message: featurePersisted
+      ? (puzzlesCache[idx].isFeatured ? "Teka-teki ditandai sebagai Pilihan Editor ⭐" : "Tanda Pilihan Editor dihapus.")
+      : "Tersimpan sementara, tapi gagal dikonfirmasi ke Supabase. Coba lagi.",
     isFeatured: puzzlesCache[idx].isFeatured,
   });
 });
 
 // 11. Admin - Edit Puzzle Metadata
-app.put("/api/admin/puzzles/:id", requireAdminAuth, (req, res) => {
+app.put("/api/admin/puzzles/:id", requireAdminAuth, async (req, res) => {
   const pId = req.params.id;
   const idx = puzzlesCache.findIndex((p) => p.id === pId);
   if (idx === -1) {
@@ -2907,9 +2985,18 @@ app.put("/api/admin/puzzles/:id", requireAdminAuth, (req, res) => {
   puzzlesCache[idx].updatedAt = Date.now();
 
   writeJsonFile(PUZZLES_FILE, puzzlesCache);
-  upsertPuzzleToSupabase(puzzlesCache[idx]).catch(() => {});
+  // PENTING: cek hasil upsert — sebelumnya fire-and-forget lalu tetap
+  // klaim "berhasil diperbarui" walau perubahan admin gagal tersimpan
+  // permanen ke Supabase.
+  const editPersisted = await upsertPuzzleToSupabase(puzzlesCache[idx]).catch(() => false);
 
-  res.json({ success: true, message: "Teka-teki berhasil diperbarui oleh Administrator.", data: puzzlesCache[idx] });
+  res.json({
+    success: editPersisted,
+    message: editPersisted
+      ? "Teka-teki berhasil diperbarui oleh Administrator."
+      : "Tersimpan sementara, tapi gagal dikonfirmasi ke Supabase. Coba lagi.",
+    data: puzzlesCache[idx],
+  });
 });
 
 // 12. Admin - Permanently Delete Puzzle
@@ -2928,12 +3015,16 @@ app.delete("/api/admin/puzzles/:id", requireAdminAuth, async (req, res) => {
   writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
   writeJsonFile(LEADERBOARDS_FILE, leaderboardsCache);
 
-  // Always remove from Supabase so other Vercel instances stop serving it
-  await deletePuzzleFromSupabase(pId).catch(() => {});
+  // PENTING: cek hasil delete di Supabase — sebelumnya fire-and-forget
+  // lalu tetap klaim "berhasil dihapus secara permanen" walau puzzle
+  // sebenarnya masih ada di Supabase dan akan muncul lagi di instance lain.
+  const adminDeletePersisted = await deletePuzzleFromSupabase(pId).catch(() => false);
 
   res.json({
-    success: true,
-    message: `Teka-teki "${deletedTitle}" berhasil dihapus secara permanen.`,
+    success: adminDeletePersisted,
+    message: adminDeletePersisted
+      ? `Teka-teki "${deletedTitle}" berhasil dihapus secara permanen.`
+      : `Dihapus dari cache server, tapi GAGAL dihapus dari Supabase — "${deletedTitle}" bisa muncul lagi. Coba lagi.`,
   });
 });
 
@@ -2962,15 +3053,27 @@ app.get("/api/admin/comments", requireAdminAuth, async (req, res) => {
 });
 
 // 14. Admin - Delete Any Comment
-app.delete("/api/admin/comments/:puzzleId/:commentId", requireAdminAuth, (req, res) => {
+app.delete("/api/admin/comments/:puzzleId/:commentId", requireAdminAuth, async (req, res) => {
   const { puzzleId, commentId } = req.params;
   const pIdx = puzzlesCache.findIndex((p) => p.id === puzzleId);
-  if (pIdx >= 0 && Array.isArray(puzzlesCache[pIdx].comments)) {
+  if (pIdx < 0) {
+    return res.json({ success: true, message: "Komentar tidak ditemukan (mungkin sudah terhapus)." });
+  }
+  if (Array.isArray(puzzlesCache[pIdx].comments)) {
     puzzlesCache[pIdx].comments = puzzlesCache[pIdx].comments.filter((c: any) => c.id !== commentId);
     writeJsonFile(PUZZLES_FILE, puzzlesCache);
-    upsertPuzzleToSupabase(puzzlesCache[pIdx]).catch(() => {});
   }
-  res.json({ success: true, message: "Komentar berhasil dimoderasi dan dihapus." });
+  // PENTING: cek hasil upsert ke Supabase — sebelumnya `.catch(() => {})`
+  // menelan error lalu tetap klaim sukses. Kalau upsert gagal, komentar
+  // yang sedang dimoderasi admin masih ada di kolom `comments` versi
+  // Supabase dan akan MUNCUL LAGI begitu puzzle di-fetch ulang dari sana.
+  const persisted = await upsertPuzzleToSupabase(puzzlesCache[pIdx]).catch(() => false);
+  res.json({
+    success: persisted,
+    message: persisted
+      ? "Komentar berhasil dimoderasi dan dihapus."
+      : "Dihapus dari cache server, tapi GAGAL tersimpan ke Supabase — komentar ini bisa muncul lagi setelah refresh. Coba lagi.",
+  });
 });
 
 // 15. Admin - List All Leaderboard Entries
@@ -3013,8 +3116,18 @@ app.delete("/api/admin/leaderboards/:puzzleId/:id", requireAdminAuth, async (req
     leaderboardsCache[puzzleId] = leaderboardsCache[puzzleId].filter((e: any) => e.id !== id);
     writeJsonFile(LEADERBOARDS_FILE, leaderboardsCache);
   }
-  await deleteLeaderboardEntryFromSupabase(puzzleId, id).catch(() => {});
-  res.json({ success: true, message: "Rekor skor leaderboard berhasil dihapus dari Supabase." });
+  // PENTING: hasil delete ke Supabase HARUS dicek. Sebelumnya
+  // `.catch(() => {})` menelan error lalu tetap klaim "berhasil dihapus
+  // dari Supabase" — kalau gagal, entri yang sedang dimoderasi admin
+  // (misal skor curang) akan MUNCUL LAGI begitu leaderboardsCache
+  // di-refresh ulang dari Supabase, tanpa admin sadar moderasinya gagal.
+  const deletedFromSupabase = await deleteLeaderboardEntryFromSupabase(puzzleId, id).catch(() => false);
+  res.json({
+    success: deletedFromSupabase,
+    message: deletedFromSupabase
+      ? "Rekor skor leaderboard berhasil dihapus dari Supabase."
+      : "Dihapus dari cache server, tapi GAGAL dihapus dari Supabase — entri ini bisa muncul lagi setelah refresh. Coba lagi.",
+  });
 });
 
 // 17. Public Announcement & Admin Announcement Management
