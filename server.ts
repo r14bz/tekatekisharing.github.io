@@ -1745,6 +1745,32 @@ app.post("/api/leaderboard/:puzzleId", async (req, res) => {
     };
 
     const saved = upsertLocalLeaderboardEntry(puzzleId, newEntry);
+
+    // "Diselesaikan" (completionsCount) sebelumnya TIDAK PERNAH di-increment
+    // di mana pun dalam kode — selalu tampil 0 di kartu statistik profil
+    // kreator. Increment di sini, HANYA saat ini benar-benar penyelesaian
+    // BARU oleh pemain ini untuk puzzle ini (bukan tiap kali dia resubmit
+    // skor yang lebih baik pada puzzle yang sama), supaya angkanya
+    // merepresentasikan jumlah penyelesaian unik, bukan jumlah submit.
+    const isNewCompletion = saved.id === newEntry.id;
+    if (isNewCompletion && puzzleForScore) {
+      try {
+        const pIdx = puzzlesCache.findIndex((p) => p.id === puzzleId);
+        if (pIdx >= 0) {
+          puzzlesCache[pIdx].completionsCount = (Number(puzzlesCache[pIdx].completionsCount) || 0) + 1;
+          puzzlesCache[pIdx].updatedAt = Date.now();
+          puzzlesCache[pIdx] = withPlayMetaEmbedded(puzzlesCache[pIdx]);
+          writeJsonFile(PUZZLES_FILE, puzzlesCache);
+          writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
+          upsertPuzzleToSupabase(puzzlesCache[pIdx]).catch((e) =>
+            console.warn("[leaderboard] Gagal upsert completionsCount ke Supabase:", puzzleId, e)
+          );
+        }
+      } catch (e) {
+        console.warn("[leaderboard] Gagal increment completionsCount:", puzzleId, e);
+      }
+    }
+
     const persistResult = await insertLeaderboardEntryToSupabase(puzzleId, saved);
     const persisted = Boolean(persistResult && (persistResult as any).ok);
     const persistError =
@@ -2581,6 +2607,77 @@ app.post("/api/admin/sync", requireAdminAuth, async (req, res) => {
     res.status(500).json({ success: false, message: "Gagal sinkronisasi: " + (err?.message || "Error") });
   }
 });
+
+// 4.1b One-time backfill: isi completionsCount dari entri leaderboard yang
+// SUDAH ADA (sebelum fix increment ditambahkan, field ini selalu 0).
+// leaderboardsCache[puzzleId] sudah dedup satu entri per pemain unik
+// (lihat upsertLocalLeaderboardEntry), jadi jumlah entrinya = jumlah
+// penyelesaian unik untuk puzzle tsb. Aman dijalankan berkali-kali
+// (idempotent): tidak pernah MENGURANGI completionsCount yang sudah ada,
+// hanya menaikkan ke jumlah entri leaderboard kalau itu lebih besar.
+app.post("/api/admin/backfill-completions", requireAdminAuth, async (req, res) => {
+  try {
+    await ensureLeaderboardsFromSupabase();
+    await initSupabaseData();
+
+    let updatedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+    const details: { id: string; title: string; before: number; after: number }[] = [];
+
+    for (let i = 0; i < puzzlesCache.length; i++) {
+      const puzzle = puzzlesCache[i];
+      const entries = leaderboardsCache[puzzle.id];
+      const uniqueCompletions = Array.isArray(entries) ? entries.length : 0;
+      const before = Number(puzzle.completionsCount) || 0;
+
+      if (uniqueCompletions <= before) {
+        skippedCount++;
+        continue;
+      }
+
+      puzzlesCache[i].completionsCount = uniqueCompletions;
+      puzzlesCache[i].updatedAt = Date.now();
+      puzzlesCache[i] = withPlayMetaEmbedded(puzzlesCache[i]);
+
+      const ok = await upsertPuzzleToSupabase(puzzlesCache[i]);
+      if (ok) {
+        updatedCount++;
+        details.push({
+          id: puzzle.id,
+          title: puzzle.title,
+          before,
+          after: uniqueCompletions,
+        });
+      } else {
+        failedCount++;
+        console.warn("[backfill-completions] Gagal upsert ke Supabase:", puzzle.id);
+      }
+    }
+
+    writeJsonFile(PUZZLES_FILE, puzzlesCache);
+    writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
+
+    res.json({
+      success: failedCount === 0,
+      message:
+        failedCount === 0
+          ? `Backfill selesai. ${updatedCount} TTS diperbarui, ${skippedCount} sudah sesuai/dilewati.`
+          : `Backfill selesai dengan ${failedCount} kegagalan upsert ke Supabase. ${updatedCount} TTS berhasil diperbarui.`,
+      updatedCount,
+      skippedCount,
+      failedCount,
+      details: details.slice(0, 50), // batasi payload respons
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      message: "Gagal menjalankan backfill: " + (err?.message || "Error"),
+    });
+  }
+});
+
+
 
 // 4.2 Admin Supabase Direct Configuration Update
 app.post("/api/admin/supabase-config", requireAdminAuth, async (req, res) => {

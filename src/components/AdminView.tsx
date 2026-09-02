@@ -199,6 +199,20 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBackToApp, onPlayPuzzle 
     }
   };
 
+  const [isBackfillingCompletions, setIsBackfillingCompletions] = useState<boolean>(false);
+  const handleBackfillCompletions = async () => {
+    setIsBackfillingCompletions(true);
+    try {
+      const res = await AdminService.backfillCompletions();
+      showNotification(res.message, res.success ? 'success' : 'error');
+      if (res.success) await loadAllAdminData();
+    } catch (e: any) {
+      showNotification('Gagal menjalankan backfill statistik penyelesaian.', 'error');
+    } finally {
+      setIsBackfillingCompletions(false);
+    }
+  };
+
   const showNotification = (text: string, type: 'success' | 'error' = 'success') => {
     setActionMessage({ text, type });
     setTimeout(() => {
@@ -809,6 +823,17 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBackToApp, onPlayPuzzle 
                   >
                     <Code className="w-3.5 h-3.5" />
                     <span>Skrip SQL Supabase</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleBackfillCompletions}
+                    disabled={isBackfillingCompletions}
+                    title='Isi ulang statistik "Diselesaikan" dari data leaderboard yang sudah ada (aman dijalankan berkali-kali)'
+                    className="w-full sm:col-span-2 py-2 px-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/50 border border-amber-200 dark:border-amber-800/70 text-amber-700 dark:text-amber-300 text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    <CheckCircle2 className={`w-3.5 h-3.5 ${isBackfillingCompletions ? 'animate-spin' : ''}`} />
+                    <span>{isBackfillingCompletions ? 'Menghitung ulang...' : 'Backfill Statistik "Diselesaikan"'}</span>
                   </button>
                 </div>
               </div>

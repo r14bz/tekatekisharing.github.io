@@ -269,6 +269,38 @@ export const AdminService = {
   },
 
   /**
+   * One-time backfill: isi ulang completionsCount ("Diselesaikan") dari
+   * jumlah entri leaderboard unik yang SUDAH ADA untuk tiap TTS —
+   * diperlukan karena field ini sebelumnya tidak pernah di-increment sama
+   * sekali sehingga selalu 0 untuk penyelesaian yang terjadi sebelum fix
+   * increment ditambahkan. Aman dijalankan berkali-kali (idempotent).
+   */
+  async backfillCompletions(): Promise<{
+    success: boolean;
+    message: string;
+    updatedCount?: number;
+    skippedCount?: number;
+    failedCount?: number;
+  }> {
+    try {
+      const res = await fetch(`${API_BASE}/admin/backfill-completions`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+      });
+      const json = await res.json().catch(() => null);
+      return {
+        success: Boolean(json?.success),
+        message: json?.message || `Backfill gagal (status ${res.status}).`,
+        updatedCount: json?.updatedCount,
+        skippedCount: json?.skippedCount,
+        failedCount: json?.failedCount,
+      };
+    } catch (err: any) {
+      return { success: false, message: 'Gagal menghubungi server untuk menjalankan backfill.' };
+    }
+  },
+
+  /**
    * Check Supabase Cloud connection status details
    */
   async getSupabaseStatus(): Promise<any> {
