@@ -1685,6 +1685,272 @@ function countFilledCells(grid: any): number {
   return count > 0 ? count : 25;
 }
 
+/* ============================================================
+   GENERATOR TTS OTOMATIS (Admin) — Groq (kata & clue) + penyusun
+   grid crossword lokal (murni algoritma, tidak butuh AI).
+   ============================================================ */
+
+interface WordClueInput {
+  word: string;
+  clue: string;
+}
+
+interface PlacedWord {
+  word: string;
+  clue: string;
+  row: number;
+  col: number;
+  dir: "across" | "down";
+}
+
+/**
+ * Memanggil Groq (kompatibel format OpenAI) untuk menghasilkan pasangan
+ * kata+soal TTS berbahasa Indonesia sesuai topik bebas dari admin.
+ */
+async function generateWordsWithGroq(
+  topic: string,
+  count: number,
+  apiKey: string,
+  model: string
+): Promise<WordClueInput[]> {
+  const prompt = `Buat ${count} pasangan KATA dan SOAL (clue) untuk teka-teki silang (TTS) berbahasa Indonesia dengan topik: "${topic}".
+
+Aturan WAJIB:
+- Setiap kata HARUS satu kata tunggal (tanpa spasi/tanda baca), hanya huruf A-Z, panjang 3 sampai 10 huruf.
+- Tidak boleh ada kata yang berulang atau bermakna sama.
+- Soal (clue) singkat, jelas, berbahasa Indonesia, dan TIDAK menyebutkan jawabannya secara langsung.
+- Variasikan panjang kata (campur pendek dan panjang) supaya grid TTS mudah disusun.
+- Balas HANYA dengan JSON, tanpa teks lain, tanpa markdown code fence, dengan format persis:
+{"words":[{"word":"CONTOH","clue":"Penjelasan singkat soal ini"}]}`;
+
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.8,
+      max_tokens: 2500,
+      response_format: { type: "json_object" },
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Groq API error (${res.status}): ${errText.slice(0, 200)}`);
+  }
+
+  const data: any = await res.json();
+  const text = data?.choices?.[0]?.message?.content || "";
+  let parsed: any;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // fallback: coba ekstrak array JSON dari teks kalau model tetap membungkus dengan penjelasan
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error("Respons AI bukan JSON yang valid.");
+    parsed = JSON.parse(match[0]);
+  }
+
+  const rawList = Array.isArray(parsed) ? parsed : parsed?.words;
+  if (!Array.isArray(rawList)) throw new Error("Format respons AI tidak sesuai (tidak ada daftar kata).");
+
+  const seen = new Set<string>();
+  const cleaned: WordClueInput[] = [];
+  for (const item of rawList) {
+    if (!item || typeof item.word !== "string" || typeof item.clue !== "string") continue;
+    const word = item.word.toUpperCase().replace(/[^A-Z]/g, "");
+    const clue = item.clue.trim().slice(0, 200);
+    if (word.length < 3 || word.length > 10 || !clue) continue;
+    if (seen.has(word)) continue;
+    seen.add(word);
+    cleaned.push({ word, clue });
+  }
+  return cleaned;
+}
+
+/**
+ * Menyusun daftar kata+soal menjadi grid TTS yang valid (saling silang),
+ * murni algoritma lokal — tidak perlu AI untuk tahap ini.
+ * Strategi: tempatkan kata terpanjang dulu, lalu cari persilangan huruf
+ * yang valid untuk tiap kata berikutnya (harus ada minimal 1 persilangan,
+ * sel sebelum/sesudah kata harus kosong, dan tetangga tegak lurus tidak
+ * boleh bersinggungan tanpa sengaja dengan kata lain).
+ */
+function packCrossword(
+  entries: WordClueInput[]
+): { grid: (string | null)[][]; placements: PlacedWord[] } | null {
+  const cleaned = entries
+    .filter((e) => e.word.length >= 3 && e.word.length <= 10)
+    .sort((a, b) => b.word.length - a.word.length);
+  if (cleaned.length === 0) return null;
+
+  const cells = new Map<string, string>();
+  const placements: PlacedWord[] = [];
+  const key = (r: number, c: number) => `${r},${c}`;
+
+  function canPlace(word: string, row: number, col: number, dir: "across" | "down"): number | false {
+    const dr = dir === "down" ? 1 : 0;
+    const dc = dir === "across" ? 1 : 0;
+    const br = row - dr;
+    const bc = col - dc;
+    if (cells.has(key(br, bc))) return false;
+
+    let crossings = 0;
+    for (let i = 0; i < word.length; i++) {
+      const r = row + dr * i;
+      const c = col + dc * i;
+      const existing = cells.get(key(r, c));
+      if (existing) {
+        if (existing !== word[i]) return false;
+        crossings++;
+      } else {
+        const pr1 = r + (dir === "across" ? 1 : 0);
+        const pc1 = c + (dir === "across" ? 0 : 1);
+        const pr2 = r - (dir === "across" ? 1 : 0);
+        const pc2 = c - (dir === "across" ? 0 : 1);
+        if (cells.has(key(pr1, pc1)) || cells.has(key(pr2, pc2))) return false;
+      }
+    }
+    const er = row + dr * word.length;
+    const ec = col + dc * word.length;
+    if (cells.has(key(er, ec))) return false;
+
+    if (placements.length === 0) return crossings; // kata pertama, bebas
+    return crossings > 0 ? crossings : false; // wajib minimal 1 persilangan
+  }
+
+  function place(word: string, clue: string, row: number, col: number, dir: "across" | "down") {
+    const dr = dir === "down" ? 1 : 0;
+    const dc = dir === "across" ? 1 : 0;
+    for (let i = 0; i < word.length; i++) {
+      cells.set(key(row + dr * i, col + dc * i), word[i]);
+    }
+    placements.push({ word, clue, row, col, dir });
+  }
+
+  place(cleaned[0].word, cleaned[0].clue, 0, 0, "across");
+
+  for (let idx = 1; idx < cleaned.length; idx++) {
+    const { word, clue } = cleaned[idx];
+    let best: { row: number; col: number; dir: "across" | "down"; score: number } | null = null;
+
+    for (let li = 0; li < word.length; li++) {
+      const letter = word[li];
+      for (const [k, existingLetter] of cells) {
+        if (existingLetter !== letter) continue;
+        const [er, ec] = k.split(",").map(Number);
+        for (const dir of ["across", "down"] as const) {
+          const row = dir === "across" ? er : er - li;
+          const col = dir === "across" ? ec - li : ec;
+          const score = canPlace(word, row, col, dir);
+          if (score !== false && (!best || score > best.score)) {
+            best = { row, col, dir, score };
+          }
+        }
+      }
+    }
+
+    if (best) {
+      place(word, clue, best.row, best.col, best.dir);
+    }
+    // kalau tidak ada persilangan valid, kata ini dilewati (mengurangi
+    // jumlah clue akhir, tapi mencegah grid yang rusak/tidak nyambung)
+  }
+
+  if (placements.length < 3) return null;
+
+  let minR = Infinity,
+    maxR = -Infinity,
+    minC = Infinity,
+    maxC = -Infinity;
+  for (const k of cells.keys()) {
+    const [r, c] = k.split(",").map(Number);
+    minR = Math.min(minR, r);
+    maxR = Math.max(maxR, r);
+    minC = Math.min(minC, c);
+    maxC = Math.max(maxC, c);
+  }
+  const height = maxR - minR + 1;
+  const width = maxC - minC + 1;
+  const grid: (string | null)[][] = Array.from({ length: height }, () => Array(width).fill(null));
+  for (const [k, letter] of cells) {
+    const [r, c] = k.split(",").map(Number);
+    grid[r - minR][c - minC] = letter;
+  }
+  const normPlacements = placements.map((p) => ({ ...p, row: p.row - minR, col: p.col - minC }));
+
+  return { grid, placements: normPlacements };
+}
+
+/**
+ * Beri nomor cell (aturan crossword standar: scan baris demi baris) lalu
+ * bentuk array `clues` dengan teks soal dari placement yang bersangkutan.
+ * Format id konsisten dengan gridBuilder.ts (posisi saja, lihat catatan
+ * di src/services/gridBuilder.ts terkait kompatibilitas mundur).
+ */
+function numberAndBuildClues(grid: (string | null)[][], placements: PlacedWord[]): any[] {
+  const height = grid.length;
+  const width = grid[0]?.length || 0;
+  const cellNumbers: (number | null)[][] = Array.from({ length: height }, () => Array(width).fill(null));
+  let num = 1;
+  const numberAt = (r: number, c: number): number => {
+    if (cellNumbers[r][c] !== null) return cellNumbers[r][c] as number;
+    cellNumbers[r][c] = num;
+    return num++;
+  };
+
+  const clueTextMap = new Map<string, string>();
+  placements.forEach((p) => clueTextMap.set(`${p.row},${p.col},${p.dir}`, p.clue));
+
+  const clues: any[] = [];
+  for (let r = 0; r < height; r++) {
+    for (let c = 0; c < width; c++) {
+      if (grid[r][c] === null) continue;
+      const startsAcross = (c === 0 || grid[r][c - 1] === null) && c + 1 < width && grid[r][c + 1] !== null;
+      const startsDown = (r === 0 || grid[r - 1][c] === null) && r + 1 < height && grid[r + 1][c] !== null;
+      if (!startsAcross && !startsDown) continue;
+      const n = numberAt(r, c);
+
+      if (startsAcross) {
+        let len = 0;
+        while (c + len < width && grid[r][c + len] !== null) len++;
+        clues.push({
+          id: `across-${r}-${c}`,
+          number: n,
+          direction: "across",
+          row: r,
+          col: c,
+          length: len,
+          answer: Array.from({ length: len }, (_, i) => grid[r][c + i]).join(""),
+          question: clueTextMap.get(`${r},${c},across`) || "",
+        });
+      }
+      if (startsDown) {
+        let len = 0;
+        while (r + len < height && grid[r + len][c] !== null) len++;
+        clues.push({
+          id: `down-${r}-${c}`,
+          number: n,
+          direction: "down",
+          row: r,
+          col: c,
+          length: len,
+          answer: Array.from({ length: len }, (_, i) => grid[r + i][c]).join(""),
+          question: clueTextMap.get(`${r},${c},down`) || "",
+        });
+      }
+    }
+  }
+  return clues;
+}
+
+/** Marker khusus untuk membedakan draft hasil generate AI dari draft biasa */
+const AI_GENERATED_AUTHOR_ID = "admin_ai_generated";
+
 app.post("/api/leaderboard/:puzzleId", async (req, res) => {
   try {
     const puzzleId = req.params.puzzleId;
@@ -3026,6 +3292,184 @@ app.delete("/api/admin/puzzles/:id", requireAdminAuth, async (req, res) => {
       ? `Teka-teki "${deletedTitle}" berhasil dihapus secara permanen.`
       : `Dihapus dari cache server, tapi GAGAL dihapus dari Supabase — "${deletedTitle}" bisa muncul lagi. Coba lagi.`,
   });
+});
+
+// 12.1 Admin - Generate TTS Otomatis (AI: Groq + penyusun grid lokal)
+app.post("/api/admin/generate-puzzle", requireAdminAuth, async (req, res) => {
+  try {
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) {
+      return res.status(400).json({
+        success: false,
+        message: "GROQ_API_KEY belum diset di Vercel Environment Variables.",
+      });
+    }
+
+    const topic = String(req.body?.topic || "").trim().slice(0, 100);
+    if (!topic) {
+      return res.status(400).json({ success: false, message: "Topik tidak boleh kosong." });
+    }
+    const wordCount = Math.max(6, Math.min(20, Number(req.body?.wordCount) || 12));
+    const model = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
+
+    let entries: WordClueInput[];
+    try {
+      entries = await generateWordsWithGroq(topic, wordCount, apiKey, model);
+    } catch (e: any) {
+      console.error("[admin] generate-puzzle Groq error:", e);
+      return res.status(502).json({
+        success: false,
+        message: "Gagal menghasilkan kata dari AI: " + (e?.message || "Error tidak diketahui"),
+      });
+    }
+
+    if (entries.length < 3) {
+      return res.status(422).json({
+        success: false,
+        message: `AI hanya menghasilkan ${entries.length} kata valid — terlalu sedikit. Coba topik lain atau ulangi.`,
+      });
+    }
+
+    const packed = packCrossword(entries);
+    if (!packed) {
+      return res.status(422).json({
+        success: false,
+        message: "Gagal menyusun grid TTS dari kata yang dihasilkan AI. Coba topik lain atau ulangi.",
+      });
+    }
+
+    const clues = numberAndBuildClues(packed.grid, packed.placements);
+    const puzzleId = "ai_" + Math.random().toString(36).substring(2, 11);
+    const now = Date.now();
+    const puzzle: any = {
+      id: puzzleId,
+      title: `TTS: ${topic}`,
+      description: `Dibuat otomatis oleh AI dengan topik "${topic}"`,
+      authorName: "AI Generator ✨",
+      authorId: AI_GENERATED_AUTHOR_ID,
+      authorAvatar: "🪄",
+      width: packed.grid[0]?.length || 0,
+      height: packed.grid.length,
+      grid: packed.grid,
+      clues,
+      isDraft: true,
+      isFeatured: false,
+      reactions: { like: 0, laugh: 0, love: 0, think: 0, fire: 0, sad: 0 },
+      userReactions: {},
+      comments: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    puzzlesCache.unshift(puzzle);
+    writeJsonFile(PUZZLES_FILE, puzzlesCache);
+    writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
+    const persisted = await upsertPuzzleToSupabase(puzzle).catch(() => false);
+
+    res.json({
+      success: true,
+      data: puzzle,
+      persisted,
+      wordsRequested: wordCount,
+      wordsPlaced: packed.placements.length,
+      message: persisted
+        ? `TTS "${topic}" berhasil digenerate (${packed.placements.length} dari ${entries.length} kata berhasil disusun) dan tersimpan sebagai draft.`
+        : `TTS berhasil digenerate, tapi gagal dikonfirmasi ke Supabase. Coba simpan ulang dari daftar draft.`,
+    });
+  } catch (err: any) {
+    console.error("[admin] generate-puzzle error:", err);
+    res.status(500).json({ success: false, message: "Gagal generate TTS otomatis." });
+  }
+});
+
+// 12.2 Admin - List draft hasil generate AI (belum dipublikasikan)
+app.get("/api/admin/ai-drafts", requireAdminAuth, async (req, res) => {
+  try {
+    await initSupabaseData();
+    const drafts = puzzlesCache.filter(
+      (p) => p.isDraft && p.authorId === AI_GENERATED_AUTHOR_ID
+    );
+    res.json({ success: true, data: drafts });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Gagal memuat draft AI." });
+  }
+});
+
+// 12.3 Admin - Edit draft hasil generate AI (judul, deskripsi, teks soal)
+app.put("/api/admin/ai-drafts/:id", requireAdminAuth, async (req, res) => {
+  try {
+    const pId = req.params.id;
+    const idx = puzzlesCache.findIndex((p) => p.id === pId && p.authorId === AI_GENERATED_AUTHOR_ID);
+    if (idx === -1) {
+      return res.status(404).json({ success: false, message: "Draft AI tidak ditemukan." });
+    }
+
+    const { title, description, clues } = req.body;
+    if (title) puzzlesCache[idx].title = String(title).trim().slice(0, 120);
+    if (description !== undefined) puzzlesCache[idx].description = String(description).trim().slice(0, 300);
+    if (Array.isArray(clues)) {
+      // Hanya izinkan update teks soal (question) per clue id yang sudah ada
+      // — struktur grid/jawaban tidak diubah dari sini agar tetap konsisten.
+      const clueMap = new Map(puzzlesCache[idx].clues.map((c: any) => [c.id, c]));
+      for (const c of clues) {
+        if (c && c.id && clueMap.has(c.id) && typeof c.question === "string") {
+          (clueMap.get(c.id) as any).question = c.question.slice(0, 200);
+        }
+      }
+    }
+    puzzlesCache[idx].updatedAt = Date.now();
+
+    writeJsonFile(PUZZLES_FILE, puzzlesCache);
+    const persisted = await upsertPuzzleToSupabase(puzzlesCache[idx]).catch(() => false);
+
+    res.json({
+      success: persisted,
+      data: puzzlesCache[idx],
+      message: persisted
+        ? "Draft berhasil disimpan."
+        : "Tersimpan sementara, tapi gagal dikonfirmasi ke Supabase. Coba lagi.",
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Gagal menyimpan draft AI." });
+  }
+});
+
+// 12.4 Admin - Publikasikan draft hasil generate AI ke komunitas
+app.post("/api/admin/ai-drafts/:id/publish", requireAdminAuth, async (req, res) => {
+  try {
+    const pId = req.params.id;
+    const idx = puzzlesCache.findIndex((p) => p.id === pId && p.authorId === AI_GENERATED_AUTHOR_ID);
+    if (idx === -1) {
+      return res.status(404).json({ success: false, message: "Draft AI tidak ditemukan." });
+    }
+
+    const authorName = String(req.body?.authorName || "").trim().slice(0, 60);
+    if (authorName) puzzlesCache[idx].authorName = authorName;
+    puzzlesCache[idx].isDraft = false;
+    puzzlesCache[idx].updatedAt = Date.now();
+
+    writeJsonFile(PUZZLES_FILE, puzzlesCache);
+    const persisted = await upsertPuzzleToSupabase(puzzlesCache[idx]).catch(() => false);
+
+    if (!persisted) {
+      // Rollback status draft lokal supaya tidak "kelihatan publish" padahal
+      // Supabase (sumber data komunitas) belum benar-benar menyimpannya.
+      puzzlesCache[idx].isDraft = true;
+      writeJsonFile(PUZZLES_FILE, puzzlesCache);
+      return res.status(502).json({
+        success: false,
+        message: "Gagal mempublikasikan ke Supabase. Coba lagi.",
+      });
+    }
+
+    res.json({
+      success: true,
+      data: puzzlesCache[idx],
+      message: `TTS "${puzzlesCache[idx].title}" berhasil dipublikasikan ke komunitas!`,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Gagal mempublikasikan draft AI." });
+  }
 });
 
 // 13. Admin - List All Comments Across All Puzzles

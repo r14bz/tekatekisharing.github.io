@@ -301,6 +301,81 @@ export const AdminService = {
   },
 
   /**
+   * Generate TTS otomatis via AI (Groq) — hasil tersimpan sebagai draft
+   * di server, TIDAK langsung publik. Admin bisa edit lalu publish sendiri
+   * lewat getAiDrafts()/updateAiDraft()/publishAiDraft() di bawah.
+   */
+  async generatePuzzle(topic: string, wordCount: number = 12): Promise<{
+    success: boolean;
+    message: string;
+    data?: any;
+    wordsPlaced?: number;
+    wordsRequested?: number;
+  }> {
+    try {
+      const res = await fetch(`${API_BASE}/admin/generate-puzzle`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify({ topic, wordCount }),
+      });
+      const json = await res.json().catch(() => null);
+      return {
+        success: Boolean(json?.success),
+        message: json?.message || `Gagal generate TTS (status ${res.status}).`,
+        data: json?.data,
+        wordsPlaced: json?.wordsPlaced,
+        wordsRequested: json?.wordsRequested,
+      };
+    } catch (err: any) {
+      return { success: false, message: 'Gagal menghubungi server untuk generate TTS.' };
+    }
+  },
+
+  /** Daftar TTS hasil generate AI yang belum dipublikasikan */
+  async getAiDrafts(): Promise<{ success: boolean; data: any[]; message?: string }> {
+    try {
+      const res = await fetch(`${API_BASE}/admin/ai-drafts`, { headers: this.getHeaders() });
+      const json = await res.json().catch(() => null);
+      return { success: Boolean(json?.success), data: Array.isArray(json?.data) ? json.data : [], message: json?.message };
+    } catch (err: any) {
+      return { success: false, data: [], message: 'Gagal memuat draft AI.' };
+    }
+  },
+
+  /** Simpan perubahan judul/deskripsi/teks soal pada draft hasil AI */
+  async updateAiDraft(
+    id: string,
+    updates: { title?: string; description?: string; clues?: { id: string; question: string }[] }
+  ): Promise<{ success: boolean; message: string; data?: any }> {
+    try {
+      const res = await fetch(`${API_BASE}/admin/ai-drafts/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: this.getHeaders(),
+        body: JSON.stringify(updates),
+      });
+      const json = await res.json().catch(() => null);
+      return { success: Boolean(json?.success), message: json?.message || `Gagal menyimpan (status ${res.status}).`, data: json?.data };
+    } catch (err: any) {
+      return { success: false, message: 'Gagal menghubungi server untuk menyimpan draft.' };
+    }
+  },
+
+  /** Publikasikan draft hasil AI ke komunitas */
+  async publishAiDraft(id: string, authorName?: string): Promise<{ success: boolean; message: string; data?: any }> {
+    try {
+      const res = await fetch(`${API_BASE}/admin/ai-drafts/${encodeURIComponent(id)}/publish`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify({ authorName }),
+      });
+      const json = await res.json().catch(() => null);
+      return { success: Boolean(json?.success), message: json?.message || `Gagal publish (status ${res.status}).`, data: json?.data };
+    } catch (err: any) {
+      return { success: false, message: 'Gagal menghubungi server untuk publish draft.' };
+    }
+  },
+
+  /**
    * Check Supabase Cloud connection status details
    */
   async getSupabaseStatus(): Promise<any> {

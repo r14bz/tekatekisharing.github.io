@@ -51,7 +51,7 @@ interface AdminViewProps {
   userProfile?: UserProfile;
 }
 
-type AdminTab = 'overview' | 'users' | 'puzzles' | 'comments' | 'leaderboards' | 'announcement';
+type AdminTab = 'overview' | 'users' | 'puzzles' | 'comments' | 'leaderboards' | 'announcement' | 'ai-generator';
 
 export const AdminView: React.FC<AdminViewProps> = ({ onBackToApp, onPlayPuzzle }) => {
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState<boolean>(() => AdminService.isLoggedIn());
@@ -111,6 +111,25 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBackToApp, onPlayPuzzle 
   });
   const [isSavingSupabase, setIsSavingSupabase] = useState<boolean>(false);
 
+  // ---- AI Generator states ----
+  const [aiDrafts, setAiDrafts] = useState<CrosswordPuzzle[]>([]);
+  const [aiTopic, setAiTopic] = useState<string>('');
+  const [aiWordCount, setAiWordCount] = useState<number>(12);
+  const [isGeneratingAi, setIsGeneratingAi] = useState<boolean>(false);
+  const [aiGenerateResult, setAiGenerateResult] = useState<string | null>(null);
+  const [editingAiDraft, setEditingAiDraft] = useState<CrosswordPuzzle | null>(null);
+  const [aiDraftTitleInput, setAiDraftTitleInput] = useState<string>('');
+  const [aiDraftDescInput, setAiDraftDescInput] = useState<string>('');
+  const [aiDraftClueInputs, setAiDraftClueInputs] = useState<Record<string, string>>({});
+  const [aiDraftAuthorInput, setAiDraftAuthorInput] = useState<string>('Tim Teka Teki Sharing');
+  const [isSavingAiDraft, setIsSavingAiDraft] = useState<boolean>(false);
+  const [isPublishingAiDraft, setIsPublishingAiDraft] = useState<boolean>(false);
+
+  const loadAiDrafts = async () => {
+    const res = await AdminService.getAiDrafts();
+    if (res.success) setAiDrafts(res.data as CrosswordPuzzle[]);
+  };
+
   // Load Admin Data on mount or when logged in
   useEffect(() => {
     if (isAdminLoggedIn) {
@@ -144,6 +163,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBackToApp, onPlayPuzzle 
       setComments(commentsData);
       setLeaderboards(leaderboardsData);
       if (annData) setAnnouncement(annData);
+      await loadAiDrafts();
     } catch (err) {
       console.error('Error loading admin data:', err);
     } finally {
@@ -211,6 +231,96 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBackToApp, onPlayPuzzle 
     } finally {
       setIsBackfillingCompletions(false);
     }
+  };
+
+  // ---- AI Generator handlers ----
+  const handleGenerateAiPuzzle = async () => {
+    const topic = aiTopic.trim();
+    if (!topic) {
+      showNotification('Topik tidak boleh kosong.', 'error');
+      return;
+    }
+    setIsGeneratingAi(true);
+    setAiGenerateResult(null);
+    try {
+      const res = await AdminService.generatePuzzle(topic, aiWordCount);
+      if (res.success) {
+        setAiGenerateResult(
+          `✅ Berhasil! ${res.wordsPlaced || 0} dari ${res.wordsRequested || aiWordCount} kata tersusun jadi grid.`
+        );
+        setAiTopic('');
+        await loadAiDrafts();
+      } else {
+        setAiGenerateResult(`❌ ${res.message}`);
+      }
+      showNotification(res.message, res.success ? 'success' : 'error');
+    } catch (e: any) {
+      showNotification('Gagal menghubungi server untuk generate TTS.', 'error');
+    } finally {
+      setIsGeneratingAi(false);
+    }
+  };
+
+  const openAiDraftEditor = (draft: CrosswordPuzzle) => {
+    setEditingAiDraft(draft);
+    setAiDraftTitleInput(draft.title);
+    setAiDraftDescInput(draft.description || '');
+    const clueMap: Record<string, string> = {};
+    (draft.clues || []).forEach((c: any) => { clueMap[c.id] = c.question; });
+    setAiDraftClueInputs(clueMap);
+    setAiDraftAuthorInput('Tim Teka Teki Sharing');
+  };
+
+  const handleSaveAiDraft = async () => {
+    if (!editingAiDraft) return;
+    setIsSavingAiDraft(true);
+    try {
+      const clues = Object.entries(aiDraftClueInputs).map(([id, question]) => ({ id, question }));
+      const res = await AdminService.updateAiDraft(editingAiDraft.id, {
+        title: aiDraftTitleInput,
+        description: aiDraftDescInput,
+        clues,
+      });
+      showNotification(res.message, res.success ? 'success' : 'error');
+      if (res.success) {
+        await loadAiDrafts();
+        if (res.data) setEditingAiDraft(res.data as CrosswordPuzzle);
+      }
+    } catch (e: any) {
+      showNotification('Gagal menyimpan draft AI.', 'error');
+    } finally {
+      setIsSavingAiDraft(false);
+    }
+  };
+
+  const handlePublishAiDraft = async () => {
+    if (!editingAiDraft) return;
+    setIsPublishingAiDraft(true);
+    try {
+      // Simpan dulu perubahan terbaru sebelum publish, supaya tidak ada
+      // edit yang tertinggal.
+      const clues = Object.entries(aiDraftClueInputs).map(([id, question]) => ({ id, question }));
+      await AdminService.updateAiDraft(editingAiDraft.id, {
+        title: aiDraftTitleInput,
+        description: aiDraftDescInput,
+        clues,
+      });
+      const res = await AdminService.publishAiDraft(editingAiDraft.id, aiDraftAuthorInput);
+      showNotification(res.message, res.success ? 'success' : 'error');
+      if (res.success) {
+        setEditingAiDraft(null);
+        await loadAiDrafts();
+        await loadAllAdminData();
+      }
+    } catch (e: any) {
+      showNotification('Gagal mempublikasikan draft AI.', 'error');
+    } finally {
+      setIsPublishingAiDraft(false);
+    }
+  };
+
+  const handleDeleteAiDraft = (draft: CrosswordPuzzle) => {
+    setDeleteConfirm({ type: 'puzzle', id: draft.id, title: `draft AI "${draft.title}"` });
   };
 
   const showNotification = (text: string, type: 'success' | 'error' = 'success') => {
@@ -328,6 +438,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBackToApp, onPlayPuzzle 
     const res = await AdminService.deletePuzzle(puzzleId);
     if (res.success) {
       setPuzzles((prev) => prev.filter((p) => p.id !== puzzleId));
+      setAiDrafts((prev) => prev.filter((p) => p.id !== puzzleId));
+      if (editingAiDraft?.id === puzzleId) setEditingAiDraft(null);
       showNotification(res.message, 'success');
       setDeleteConfirm(null);
     } else {
@@ -610,6 +722,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBackToApp, onPlayPuzzle 
           { id: 'comments', label: `Komentar (${comments.length})`, icon: MessageSquare },
           { id: 'leaderboards', label: `Papan Skor (${leaderboards.length})`, icon: Trophy },
           { id: 'announcement', label: 'Pengumuman Global', icon: Megaphone },
+          { id: 'ai-generator', label: `🪄 Generator AI${aiDrafts.length ? ` (${aiDrafts.length})` : ''}`, icon: Sparkles },
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -1485,6 +1598,126 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBackToApp, onPlayPuzzle 
       )}
 
       {/* ===================================================================== */}
+      {/* TAB: GENERATOR TTS OTOMATIS (AI) */}
+      {/* ===================================================================== */}
+      {activeTab === 'ai-generator' && (
+        <div className="space-y-4">
+          {/* Panel Generate */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 sm:p-6 shadow-2xs space-y-4">
+            <div>
+              <h2 className="text-sm sm:text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-500" />
+                <span>Generator TTS Otomatis</span>
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                AI (Groq) akan membuat kata & soal sesuai topik, lalu disusun otomatis jadi grid TTS.
+                Hasilnya tersimpan sebagai <b>draft</b> — belum terlihat pemain lain sampai Anda edit & publish sendiri.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                  Topik TTS
+                </label>
+                <input
+                  type="text"
+                  value={aiTopic}
+                  onChange={(e) => setAiTopic(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && !isGeneratingAi) handleGenerateAiPuzzle(); }}
+                  placeholder="Contoh: Kuliner Nusantara, Sejarah Indonesia, Film 90-an..."
+                  className="w-full p-3 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  disabled={isGeneratingAi}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                  Jumlah Kata
+                </label>
+                <select
+                  value={aiWordCount}
+                  onChange={(e) => setAiWordCount(Number(e.target.value))}
+                  disabled={isGeneratingAi}
+                  className="p-3 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  {[8, 10, 12, 15, 18, 20].map((n) => (
+                    <option key={n} value={n}>{n} kata</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleGenerateAiPuzzle}
+              disabled={isGeneratingAi || !aiTopic.trim()}
+              className="px-5 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-xs rounded-xl shadow-md shadow-amber-500/20 flex items-center gap-2 transition-all cursor-pointer active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Sparkles className={`w-4 h-4 ${isGeneratingAi ? 'animate-pulse' : ''}`} />
+              <span>{isGeneratingAi ? 'Sedang membuat TTS...' : 'Generate TTS Sekarang'}</span>
+            </button>
+
+            {aiGenerateResult && (
+              <div className="text-xs font-semibold p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300">
+                {aiGenerateResult}
+              </div>
+            )}
+
+            <div className="text-[11px] text-slate-400 dark:text-slate-500 leading-relaxed">
+              Butuh <code className="px-1 py-0.5 bg-slate-100 dark:bg-slate-800 rounded">GROQ_API_KEY</code> di
+              Vercel Environment Variables. Model default: <code className="px-1 py-0.5 bg-slate-100 dark:bg-slate-800 rounded">openai/gpt-oss-120b</code> (bisa
+              diganti lewat <code className="px-1 py-0.5 bg-slate-100 dark:bg-slate-800 rounded">GROQ_MODEL</code>).
+            </div>
+          </div>
+
+          {/* Daftar Draft AI */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 sm:p-6 shadow-2xs">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-3">
+              Draft Hasil Generate ({aiDrafts.length})
+            </h3>
+            {aiDrafts.length === 0 ? (
+              <div className="text-center py-8 text-xs text-slate-400 dark:text-slate-500">
+                Belum ada draft. Generate TTS baru di atas untuk mulai.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {aiDrafts.map((d) => (
+                  <div
+                    key={d.id}
+                    className="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">{d.title}</div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                        {d.width}x{d.height} kotak · {(d.clues || []).length} soal
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => openAiDraftEditor(d)}
+                        className="px-3 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 text-[11px] font-bold hover:bg-indigo-100 dark:hover:bg-indigo-900 cursor-pointer"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteAiDraft(d)}
+                        className="p-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/60 text-rose-600 hover:bg-rose-100 dark:hover:bg-rose-900 cursor-pointer"
+                        title="Hapus draft"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ===================================================================== */}
       {/* MODAL: RESET PASSWORD PENGGUNA */}
       {/* ===================================================================== */}
       {resetPasswordUser && (
@@ -1612,6 +1845,113 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBackToApp, onPlayPuzzle 
                 className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-md cursor-pointer"
               >
                 Simpan Perubahan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* MODAL: EDIT & PUBLISH DRAFT AI */}
+      {/* ===================================================================== */}
+      {editingAiDraft && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-4 animate-in fade-in zoom-in-95 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 font-bold text-sm">
+                <Sparkles className="w-4 h-4" />
+                <span>Edit Draft AI</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingAiDraft(null)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Judul TTS</label>
+                <input
+                  type="text"
+                  value={aiDraftTitleInput}
+                  onChange={(e) => setAiDraftTitleInput(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-semibold"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Deskripsi</label>
+                <input
+                  type="text"
+                  value={aiDraftDescInput}
+                  onChange={(e) => setAiDraftDescInput(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-semibold"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Nama Penulis (ditampilkan saat dipublikasikan)
+                </label>
+                <input
+                  type="text"
+                  value={aiDraftAuthorInput}
+                  onChange={(e) => setAiDraftAuthorInput(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-semibold"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-2">
+                  Soal ({(editingAiDraft.clues || []).length})
+                </label>
+                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                  {(editingAiDraft.clues || [])
+                    .slice()
+                    .sort((a: any, b: any) => a.number - b.number || (a.direction > b.direction ? 1 : -1))
+                    .map((c: any) => (
+                      <div key={c.id} className="flex items-start gap-2">
+                        <span className="mt-2 px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400 shrink-0">
+                          {c.number}{c.direction === 'across' ? 'M' : 'K'}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <input
+                            type="text"
+                            value={aiDraftClueInputs[c.id] ?? c.question}
+                            onChange={(e) =>
+                              setAiDraftClueInputs((prev) => ({ ...prev, [c.id]: e.target.value }))
+                            }
+                            className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-[11px]"
+                          />
+                          <div className="text-[10px] text-slate-400 mt-0.5">
+                            Jawaban: {c.answer} ({c.length} huruf, {c.direction === 'across' ? 'Mendatar' : 'Menurun'})
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={handleSaveAiDraft}
+                disabled={isSavingAiDraft || isPublishingAiDraft}
+                className="flex-1 py-2 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold rounded-xl cursor-pointer disabled:opacity-50"
+              >
+                {isSavingAiDraft ? 'Menyimpan...' : 'Simpan Draft'}
+              </button>
+              <button
+                type="button"
+                onClick={handlePublishAiDraft}
+                disabled={isSavingAiDraft || isPublishingAiDraft}
+                className="flex-1 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold rounded-xl shadow-md cursor-pointer disabled:opacity-50"
+              >
+                {isPublishingAiDraft ? 'Mempublikasikan...' : '🚀 Publikasikan ke Komunitas'}
               </button>
             </div>
           </div>
