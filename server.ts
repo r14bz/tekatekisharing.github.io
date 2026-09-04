@@ -3431,14 +3431,80 @@ app.put("/api/admin/ai-drafts/:id", requireAdminAuth, async (req, res) => {
     const { title, description, clues } = req.body;
     if (title) puzzlesCache[idx].title = String(title).trim().slice(0, 120);
     if (description !== undefined) puzzlesCache[idx].description = String(description).trim().slice(0, 300);
+
     if (Array.isArray(clues)) {
-      // Hanya izinkan update teks soal (question) per clue id yang sudah ada
-      // — struktur grid/jawaban tidak diubah dari sini agar tetap konsisten.
-      const clueMap = new Map(puzzlesCache[idx].clues.map((c: any) => [c.id, c]));
+      const puzzle = puzzlesCache[idx];
+      const clueMap = new Map(puzzle.clues.map((c: any) => [c.id, c]));
+
+      // ---- Update teks soal (question) — bebas, tidak memengaruhi grid ----
       for (const c of clues) {
         if (c && c.id && clueMap.has(c.id) && typeof c.question === "string") {
           (clueMap.get(c.id) as any).question = c.question.slice(0, 200);
         }
+      }
+
+      // ---- Update KATA jawaban (word) — perlu validasi supaya grid tetap
+      // konsisten. Panjang kata baru HARUS sama persis (bentuk grid tidak
+      // diubah dari sini). Kalau ada sel yang dipakai bersama (persilangan)
+      // antar dua kata yang SAMA-SAMA diedit di request ini dan hasilnya
+      // beda huruf, ditolak seluruhnya (atomic) supaya grid tidak rusak.
+      const wordEdits: { clue: any; newWord: string }[] = [];
+      for (const c of clues) {
+        if (c && c.id && clueMap.has(c.id) && typeof c.word === "string" && c.word.trim() !== "") {
+          const clue: any = clueMap.get(c.id);
+          const newWord = c.word.toUpperCase().replace(/[^A-Z]/g, "");
+          if (newWord.length !== clue.length) {
+            return res.status(400).json({
+              success: false,
+              message: `Kata untuk soal #${clue.number}${clue.direction === "across" ? "M" : "K"} harus tepat ${clue.length} huruf (yang dimasukkan: ${newWord.length} huruf).`,
+            });
+          }
+          wordEdits.push({ clue, newWord });
+        }
+      }
+
+      if (wordEdits.length > 0) {
+        const grid: (string | null)[][] = puzzle.grid.map((row: any[]) => [...row]);
+        const touched = new Map<string, string>();
+
+        for (const { clue, newWord } of wordEdits) {
+          const dr = clue.direction === "down" ? 1 : 0;
+          const dc = clue.direction === "across" ? 1 : 0;
+          for (let i = 0; i < newWord.length; i++) {
+            const r = clue.row + dr * i;
+            const c = clue.col + dc * i;
+            const k = `${r},${c}`;
+            const letter = newWord[i];
+            if (touched.has(k) && touched.get(k) !== letter) {
+              return res.status(400).json({
+                success: false,
+                message: `Perubahan pada soal #${clue.number}${clue.direction === "across" ? "M" : "K"} bentrok dengan kata lain yang bersilangan di sel yang sama (huruf berbeda). Sesuaikan salah satu kata dulu.`,
+              });
+            }
+            touched.set(k, letter);
+          }
+        }
+
+        // Terapkan ke grid
+        for (const [k, letter] of touched) {
+          const [r, c] = k.split(",").map(Number);
+          grid[r][c] = letter;
+        }
+
+        // Regenerasi field `answer` SEMUA clue dari grid final — supaya
+        // clue lain yang kebetulan bersilangan di sel yang berubah ikut
+        // konsisten (bukan cuma clue yang diedit langsung).
+        for (const c of puzzle.clues as any[]) {
+          const dr = c.direction === "down" ? 1 : 0;
+          const dc = c.direction === "across" ? 1 : 0;
+          let answer = "";
+          for (let i = 0; i < c.length; i++) {
+            answer += grid[c.row + dr * i][c.col + dc * i] || "";
+          }
+          c.answer = answer;
+        }
+
+        puzzle.grid = grid;
       }
     }
     puzzlesCache[idx].updatedAt = Date.now();

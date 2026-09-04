@@ -177,6 +177,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBackToApp, onPlayPuzzle 
   const [aiDraftTitleInput, setAiDraftTitleInput] = useState<string>('');
   const [aiDraftDescInput, setAiDraftDescInput] = useState<string>('');
   const [aiDraftClueInputs, setAiDraftClueInputs] = useState<Record<string, string>>({});
+  const [aiDraftWordInputs, setAiDraftWordInputs] = useState<Record<string, string>>({});
   const [aiDraftAuthorInput, setAiDraftAuthorInput] = useState<string>('Tim Teka Teki Sharing');
   const [isSavingAiDraft, setIsSavingAiDraft] = useState<boolean>(false);
   const [isPublishingAiDraft, setIsPublishingAiDraft] = useState<boolean>(false);
@@ -322,25 +323,45 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBackToApp, onPlayPuzzle 
     setAiDraftTitleInput(draft.title);
     setAiDraftDescInput(draft.description || '');
     const clueMap: Record<string, string> = {};
-    (draft.clues || []).forEach((c: any) => { clueMap[c.id] = c.question; });
+    const wordMap: Record<string, string> = {};
+    (draft.clues || []).forEach((c: any) => { clueMap[c.id] = c.question; wordMap[c.id] = c.answer; });
     setAiDraftClueInputs(clueMap);
+    setAiDraftWordInputs(wordMap);
     setAiDraftAuthorInput('Tim Teka Teki Sharing');
+  };
+
+  const buildCluePayload = () =>
+    Object.keys(aiDraftClueInputs).map((id) => ({
+      id,
+      question: aiDraftClueInputs[id],
+      word: aiDraftWordInputs[id],
+    }));
+
+  const syncEditorFromDraft = (draft: CrosswordPuzzle) => {
+    setEditingAiDraft(draft);
+    const clueMap: Record<string, string> = {};
+    const wordMap: Record<string, string> = {};
+    (draft.clues || []).forEach((c: any) => { clueMap[c.id] = c.question; wordMap[c.id] = c.answer; });
+    setAiDraftClueInputs(clueMap);
+    setAiDraftWordInputs(wordMap);
   };
 
   const handleSaveAiDraft = async () => {
     if (!editingAiDraft) return;
     setIsSavingAiDraft(true);
     try {
-      const clues = Object.entries(aiDraftClueInputs).map(([id, question]) => ({ id, question }));
       const res = await AdminService.updateAiDraft(editingAiDraft.id, {
         title: aiDraftTitleInput,
         description: aiDraftDescInput,
-        clues,
+        clues: buildCluePayload(),
       });
       showNotification(res.message, res.success ? 'success' : 'error');
       if (res.success) {
         await loadAiDrafts();
-        if (res.data) setEditingAiDraft(res.data as CrosswordPuzzle);
+        // Re-sync dari respons server — kata yang bersilangan bisa ikut
+        // berubah otomatis (lihat catatan cascading di server.ts), jadi
+        // editor harus menampilkan versi terbaru, bukan input lama.
+        if (res.data) syncEditorFromDraft(res.data as CrosswordPuzzle);
       }
     } catch (e: any) {
       showNotification('Gagal menyimpan draft AI.', 'error');
@@ -354,13 +375,21 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBackToApp, onPlayPuzzle 
     setIsPublishingAiDraft(true);
     try {
       // Simpan dulu perubahan terbaru sebelum publish, supaya tidak ada
-      // edit yang tertinggal.
-      const clues = Object.entries(aiDraftClueInputs).map(([id, question]) => ({ id, question }));
-      await AdminService.updateAiDraft(editingAiDraft.id, {
+      // edit yang tertinggal. PENTING: cek hasilnya — sebelumnya diabaikan,
+      // jadi kalau validasi kata gagal (misal panjang tidak cocok / bentrok
+      // dengan kata lain), publish tetap lanjut memakai data LAMA tanpa
+      // admin sadar editannya tidak masuk.
+      const preSave = await AdminService.updateAiDraft(editingAiDraft.id, {
         title: aiDraftTitleInput,
         description: aiDraftDescInput,
-        clues,
+        clues: buildCluePayload(),
       });
+      if (!preSave.success) {
+        showNotification(preSave.message, 'error');
+        return;
+      }
+      if (preSave.data) syncEditorFromDraft(preSave.data as CrosswordPuzzle);
+
       const res = await AdminService.publishAiDraft(editingAiDraft.id, aiDraftAuthorInput);
       showNotification(res.message, res.success ? 'success' : 'error');
       if (res.success) {
@@ -1973,6 +2002,11 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBackToApp, onPlayPuzzle 
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-2">
                   Soal ({(editingAiDraft.clues || []).length})
                 </label>
+                <p className="text-[10.5px] text-slate-400 dark:text-slate-500 mb-2 leading-relaxed">
+                  Kata jawaban bisa diedit langsung (kotak huruf di bawah tiap soal) — panjangnya harus
+                  tetap sama. Kalau kata itu bersilangan dengan kata lain, huruf di titik silang akan
+                  ikut disesuaikan otomatis saat disimpan.
+                </p>
                 <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
                   {(editingAiDraft.clues || [])
                     .slice()
@@ -1982,17 +2016,41 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBackToApp, onPlayPuzzle 
                         <span className="mt-2 px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400 shrink-0">
                           {c.number}{c.direction === 'across' ? 'M' : 'K'}
                         </span>
-                        <div className="flex-1 min-w-0">
+                        <div className="flex-1 min-w-0 space-y-1.5">
                           <input
                             type="text"
                             value={aiDraftClueInputs[c.id] ?? c.question}
                             onChange={(e) =>
                               setAiDraftClueInputs((prev) => ({ ...prev, [c.id]: e.target.value }))
                             }
+                            placeholder="Teks soal"
                             className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-[11px]"
                           />
-                          <div className="text-[10px] text-slate-400 mt-0.5">
-                            Jawaban: {c.answer} ({c.length} huruf, {c.direction === 'across' ? 'Mendatar' : 'Menurun'})
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <input
+                              type="text"
+                              value={aiDraftWordInputs[c.id] ?? c.answer}
+                              onChange={(e) =>
+                                setAiDraftWordInputs((prev) => ({
+                                  ...prev,
+                                  [c.id]: e.target.value.toUpperCase().replace(/[^A-Z]/g, ''),
+                                }))
+                              }
+                              className={`px-2 py-1 rounded-lg text-[11px] font-mono font-bold tracking-widest border ${
+                                (aiDraftWordInputs[c.id] ?? c.answer).length === c.length
+                                  ? 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
+                                  : 'bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-800 text-rose-600 dark:text-rose-300'
+                              }`}
+                              style={{ width: `${Math.max(4, c.length) * 0.95 + 2}em` }}
+                            />
+                            <span className="text-[10px] text-slate-400">
+                              {c.length} huruf · {c.direction === 'across' ? 'Mendatar' : 'Menurun'}
+                            </span>
+                            {(aiDraftWordInputs[c.id] ?? c.answer).length !== c.length && (
+                              <span className="text-[10px] text-rose-500 font-bold">
+                                harus {c.length} huruf (sekarang {(aiDraftWordInputs[c.id] ?? c.answer).length})
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>

@@ -345,7 +345,7 @@ export const AdminService = {
   /** Simpan perubahan judul/deskripsi/teks soal pada draft hasil AI */
   async updateAiDraft(
     id: string,
-    updates: { title?: string; description?: string; clues?: { id: string; question: string }[] }
+    updates: { title?: string; description?: string; clues?: { id: string; question?: string; word?: string }[] }
   ): Promise<{ success: boolean; message: string; data?: any }> {
     try {
       const res = await fetch(`${API_BASE}/admin/ai-drafts/${encodeURIComponent(id)}`, {
