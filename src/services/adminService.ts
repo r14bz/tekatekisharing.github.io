@@ -345,13 +345,31 @@ export const AdminService = {
   /** Simpan perubahan judul/deskripsi/teks soal pada draft hasil AI */
   async updateAiDraft(
     id: string,
-    updates: { title?: string; description?: string; clues?: { id: string; question?: string; word?: string }[] }
+    updates: {
+      title?: string;
+      description?: string;
+      clues?: { id: string; question?: string; word?: string }[];
+      /** Mode ganti-penuh (dari editor grid) — kalau diisi, dipakai alih-alih `clues` di atas */
+      authorName?: string;
+      width?: number;
+      height?: number;
+      grid?: (string | null)[][];
+      fullClues?: any[];
+    }
   ): Promise<{ success: boolean; message: string; data?: any }> {
     try {
+      const body: any = { title: updates.title, description: updates.description, clues: updates.clues };
+      if (updates.grid) {
+        body.grid = updates.grid;
+        body.clues = updates.fullClues; // menimpa `clues` mode-patch di atas
+        body.authorName = updates.authorName;
+        body.width = updates.width;
+        body.height = updates.height;
+      }
       const res = await fetch(`${API_BASE}/admin/ai-drafts/${encodeURIComponent(id)}`, {
         method: 'PUT',
         headers: this.getHeaders(),
-        body: JSON.stringify(updates),
+        body: JSON.stringify(body),
       });
       const json = await res.json().catch(() => null);
       return { success: Boolean(json?.success), message: json?.message || `Gagal menyimpan (status ${res.status}).`, data: json?.data };
@@ -360,13 +378,17 @@ export const AdminService = {
     }
   },
 
-  /** Publikasikan draft hasil AI ke komunitas */
-  async publishAiDraft(id: string, authorName?: string): Promise<{ success: boolean; message: string; data?: any }> {
+  /** Publikasikan draft hasil AI ke komunitas — bisa sekalian kirim konten penuh (grid+clues) hasil edit terakhir */
+  async publishAiDraft(
+    id: string,
+    authorName?: string,
+    fullContent?: { title?: string; description?: string; width?: number; height?: number; grid?: (string | null)[][]; clues?: any[] }
+  ): Promise<{ success: boolean; message: string; data?: any }> {
     try {
       const res = await fetch(`${API_BASE}/admin/ai-drafts/${encodeURIComponent(id)}/publish`, {
         method: 'POST',
         headers: this.getHeaders(),
-        body: JSON.stringify({ authorName }),
+        body: JSON.stringify({ authorName, ...fullContent }),
       });
       const json = await res.json().catch(() => null);
       return { success: Boolean(json?.success), message: json?.message || `Gagal publish (status ${res.status}).`, data: json?.data };

@@ -3428,6 +3428,39 @@ app.put("/api/admin/ai-drafts/:id", requireAdminAuth, async (req, res) => {
       return res.status(404).json({ success: false, message: "Draft AI tidak ditemukan." });
     }
 
+    // ---- Mode "ganti penuh" — dipakai editor grid lengkap (sama seperti
+    // yang dipakai user biasa membuat TTS baru) yang mengirim seluruh
+    // grid+clues sekaligus, BUKAN patch teks/kata satu-satu. Kalau body
+    // memuat `grid`, jalur ini yang dipakai; jalur patch lama di bawah
+    // (question/word per id) tetap ada untuk kompatibilitas mundur.
+    if (Array.isArray(req.body?.grid)) {
+      const { title, description, authorName, width, height, grid, clues: fullClues } = req.body;
+      if (!Array.isArray(fullClues)) {
+        return res.status(400).json({ success: false, message: "Data clues tidak valid." });
+      }
+      puzzlesCache[idx] = {
+        ...puzzlesCache[idx],
+        title: title ? String(title).trim().slice(0, 120) : puzzlesCache[idx].title,
+        description: description !== undefined ? String(description).trim().slice(0, 300) : puzzlesCache[idx].description,
+        authorName: authorName ? String(authorName).trim().slice(0, 60) : puzzlesCache[idx].authorName,
+        width: Number(width) || puzzlesCache[idx].width,
+        height: Number(height) || puzzlesCache[idx].height,
+        grid,
+        clues: fullClues,
+        updatedAt: Date.now(),
+      };
+      writeJsonFile(PUZZLES_FILE, puzzlesCache);
+      writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
+      const fullReplacePersisted = await upsertPuzzleToSupabase(puzzlesCache[idx]).catch(() => false);
+      return res.json({
+        success: fullReplacePersisted,
+        data: puzzlesCache[idx],
+        message: fullReplacePersisted
+          ? "Draft berhasil disimpan."
+          : "Tersimpan sementara, tapi gagal dikonfirmasi ke Supabase. Coba lagi.",
+      });
+    }
+
     const { title, description, clues } = req.body;
     if (title) puzzlesCache[idx].title = String(title).trim().slice(0, 120);
     if (description !== undefined) puzzlesCache[idx].description = String(description).trim().slice(0, 300);
@@ -3533,12 +3566,31 @@ app.post("/api/admin/ai-drafts/:id/publish", requireAdminAuth, async (req, res) 
       return res.status(404).json({ success: false, message: "Draft AI tidak ditemukan." });
     }
 
-    const authorName = String(req.body?.authorName || "").trim().slice(0, 60);
-    if (authorName) puzzlesCache[idx].authorName = authorName;
+    // Kalau body memuat grid+clues lengkap (dari editor grid, sama seperti
+    // alur user biasa), terapkan dulu SEBELUM flip ke published — supaya
+    // hasil edit terakhir (termasuk perubahan grid) ikut terpublikasikan
+    // dalam satu langkah, bukan dua request terpisah yang bisa gagal
+    // sebagian.
+    const { title, description, authorName, width, height, grid, clues } = req.body;
+    if (Array.isArray(grid) && Array.isArray(clues)) {
+      puzzlesCache[idx] = {
+        ...puzzlesCache[idx],
+        title: title ? String(title).trim().slice(0, 120) : puzzlesCache[idx].title,
+        description: description !== undefined ? String(description).trim().slice(0, 300) : puzzlesCache[idx].description,
+        width: Number(width) || puzzlesCache[idx].width,
+        height: Number(height) || puzzlesCache[idx].height,
+        grid,
+        clues,
+      };
+    }
+
+    const cleanAuthorName = String(authorName || "").trim().slice(0, 60);
+    if (cleanAuthorName) puzzlesCache[idx].authorName = cleanAuthorName;
     puzzlesCache[idx].isDraft = false;
     puzzlesCache[idx].updatedAt = Date.now();
 
     writeJsonFile(PUZZLES_FILE, puzzlesCache);
+    writeJsonFile(PUZZLES_BACKUP_FILE, puzzlesCache);
     const persisted = await upsertPuzzleToSupabase(puzzlesCache[idx]).catch(() => false);
 
     if (!persisted) {

@@ -35,6 +35,17 @@ interface CreatorViewProps {
   onOpenDrafts?: () => void;
   onBackToHome?: () => void;
   onOpenSyncModal?: () => void;
+  /**
+   * Dipakai HANYA saat CreatorView dibuka dari Admin Panel untuk mengedit
+   * draft hasil generate AI. Kalau diisi, tombol Simpan Draf & Publikasikan
+   * memanggil endpoint admin (bukan alur user biasa lewat CloudService/
+   * StorageService), dan pengecekan "harus login" dilewati karena admin
+   * punya sesi otentikasi sendiri yang terpisah dari akun user biasa.
+   */
+  adminMode?: {
+    onSaveDraft: (puzzle: CrosswordPuzzle) => Promise<{ success: boolean; message: string }>;
+    onPublish: (puzzle: CrosswordPuzzle) => Promise<{ success: boolean; message: string }>;
+  };
 }
 
 export const CreatorView: React.FC<CreatorViewProps> = ({
@@ -45,6 +56,7 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
   onOpenDrafts,
   onBackToHome,
   onOpenSyncModal,
+  adminMode,
 }) => {
   // PENTING: id puzzle dibuat SEKALI dan disimpan di ref, bukan dibuat
   // ulang tiap kali handleSaveDraft/validateAndBuildPuzzle dipanggil.
@@ -404,7 +416,9 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
   };
 
   // Requirement #5 & #8: Save as Draft with popup modal and auto redirect to home
-  const handleSaveDraft = () => {
+  const [isSavingAdminDraft, setIsSavingAdminDraft] = useState(false);
+
+  const handleSaveDraft = async () => {
     const finalClues = clues.map((clue) => ({
       ...clue,
       question: (clueQuestions[clue.id] || '').trim(),
@@ -417,8 +431,12 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
       title: title.trim() || 'Draf TTS Tanpa Judul',
       description: description.trim(),
       authorName: authorName.trim() || userProfile.name,
-      authorId: userProfile.id,
-      authorEmail: userProfile.email,
+      // PENTING: di mode admin, authorId/authorEmail HARUS tetap memakai
+      // identitas asli draft (mis. marker khusus draft AI), bukan
+      // userProfile.id — supaya draft tidak "berpindah pemilik" ke akun
+      // lain dan tetap terdeteksi oleh daftar draft AI di Admin Panel.
+      authorId: adminMode ? initialPuzzle?.authorId || 'admin_ai_generated' : userProfile.id,
+      authorEmail: adminMode ? initialPuzzle?.authorEmail : userProfile.email,
       customCode: cleanCode || undefined,
       isDraft: true,
       width: gridSize,
@@ -428,6 +446,24 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
       createdAt: initialPuzzle?.createdAt || Date.now(),
       updatedAt: Date.now(),
     };
+
+    if (adminMode) {
+      setIsSavingAdminDraft(true);
+      try {
+        const res = await adminMode.onSaveDraft(draftPuzzle);
+        if (res.success) {
+          setSavedDraftSuccess(true);
+          setTimeout(() => setSavedDraftSuccess(false), 2000);
+        } else {
+          showAppToast(res.message || 'Gagal menyimpan draft.', 'error');
+        }
+      } catch {
+        showAppToast('Gagal menghubungi server untuk menyimpan draft.', 'error');
+      } finally {
+        setIsSavingAdminDraft(false);
+      }
+      return;
+    }
 
     StorageService.saveDraftPuzzle(draftPuzzle);
     setSavedDraftSuccess(true);
@@ -499,8 +535,8 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
       title: title.trim(),
       description: description.trim(),
       authorName: authorName.trim(),
-      authorId: userProfile.id,
-      authorEmail: userProfile.email,
+      authorId: adminMode ? initialPuzzle?.authorId || 'admin_ai_generated' : userProfile.id,
+      authorEmail: adminMode ? initialPuzzle?.authorEmail : userProfile.email,
       customCode: cleanCode || undefined,
       isDraft: false,
       width: gridSize,
@@ -516,6 +552,27 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
 
   // Requirement #6: Publish & save to cloud database, then show custom code (no direct link)
     const handlePublishAndSave = async () => {
+    if (adminMode) {
+      const puzzle = validateAndBuildPuzzle();
+      if (!puzzle) return;
+      setIsSavingAdminDraft(true);
+      try {
+        const res = await adminMode.onPublish(puzzle);
+        if (res.success) {
+          setPublishedLocallyOnly(false);
+          setPublishedSuccessPuzzle(puzzle);
+          showToast(res.message || 'TTS berhasil dipublikasikan ke komunitas!', 'success');
+        } else {
+          showAppToast(res.message || 'Gagal mempublikasikan ke cloud.', 'error');
+        }
+      } catch {
+        showAppToast('Gagal menghubungi server untuk mempublikasikan.', 'error');
+      } finally {
+        setIsSavingAdminDraft(false);
+      }
+      return;
+    }
+
     if (!userProfile.isLoggedIn) {
       showAppToast('Login terlebih dahulu untuk mempublikasikan TTS', 'auth', {
         actionLabel: 'Login',
@@ -1101,11 +1158,12 @@ const acrossClues = clues.filter((c) => c.direction === 'across');
             type="button"
             id="btn-creator-save-draft"
             onClick={handleSaveDraft}
-            className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center gap-2 border border-slate-300 transition-colors shadow-2xs cursor-pointer"
+            disabled={isSavingAdminDraft}
+            className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center gap-2 border border-slate-300 transition-colors shadow-2xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             title="Simpan progress pembuatan ke daftar draf tanpa validasi ketat"
           >
             <Save className="w-4 h-4 text-slate-600" />
-            <span>Simpan Draf</span>
+            <span>{isSavingAdminDraft ? 'Menyimpan...' : 'Simpan Draf'}</span>
           </button>
         </div>
 
@@ -1125,10 +1183,11 @@ const acrossClues = clues.filter((c) => c.direction === 'across');
             type="button"
             id="btn-creator-publish-puzzle"
             onClick={handlePublishAndSave}
-            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center gap-2 shadow-xs transition-all cursor-pointer"
+            disabled={isSavingAdminDraft}
+            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center gap-2 shadow-xs transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Send className="w-4 h-4" />
-            <span>Publish Teka-Teki</span>
+            <span>{isSavingAdminDraft ? 'Memproses...' : 'Publish Teka-Teki'}</span>
           </button>
         </div>
       </div>
