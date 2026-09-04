@@ -1783,16 +1783,34 @@ Aturan WAJIB:
 function packCrossword(
   entries: WordClueInput[]
 ): { grid: (string | null)[][]; placements: PlacedWord[] } | null {
+  const MAX_DIM = 11; // Grid TTS hasil generate tidak boleh melebihi 11x11
   const cleaned = entries
-    .filter((e) => e.word.length >= 3 && e.word.length <= 10)
+    .filter((e) => e.word.length >= 3 && e.word.length <= MAX_DIM)
     .sort((a, b) => b.word.length - a.word.length);
   if (cleaned.length === 0) return null;
 
   const cells = new Map<string, string>();
   const placements: PlacedWord[] = [];
   const key = (r: number, c: number) => `${r},${c}`;
+  // Bounding box berjalan dari sel yang SUDAH ditempatkan — dipakai untuk
+  // menolak kandidat penempatan yang akan membuat grid melebihi MAX_DIM.
+  let boundMinR = Infinity, boundMaxR = -Infinity, boundMinC = Infinity, boundMaxC = -Infinity;
+
+  function wouldExceedMaxDim(word: string, row: number, col: number, dir: "across" | "down"): boolean {
+    const dr = dir === "down" ? 1 : 0;
+    const dc = dir === "across" ? 1 : 0;
+    const endRow = row + dr * (word.length - 1);
+    const endCol = col + dc * (word.length - 1);
+    const newMinR = Math.min(boundMinR, row, endRow);
+    const newMaxR = Math.max(boundMaxR, row, endRow);
+    const newMinC = Math.min(boundMinC, col, endCol);
+    const newMaxC = Math.max(boundMaxC, col, endCol);
+    return (newMaxR - newMinR + 1) > MAX_DIM || (newMaxC - newMinC + 1) > MAX_DIM;
+  }
 
   function canPlace(word: string, row: number, col: number, dir: "across" | "down"): number | false {
+    if (wouldExceedMaxDim(word, row, col, dir)) return false;
+
     const dr = dir === "down" ? 1 : 0;
     const dc = dir === "across" ? 1 : 0;
     const br = row - dr;
@@ -1827,7 +1845,13 @@ function packCrossword(
     const dr = dir === "down" ? 1 : 0;
     const dc = dir === "across" ? 1 : 0;
     for (let i = 0; i < word.length; i++) {
-      cells.set(key(row + dr * i, col + dc * i), word[i]);
+      const r = row + dr * i;
+      const c = col + dc * i;
+      cells.set(key(r, c), word[i]);
+      boundMinR = Math.min(boundMinR, r);
+      boundMaxR = Math.max(boundMaxR, r);
+      boundMinC = Math.min(boundMinC, c);
+      boundMaxC = Math.max(boundMaxC, c);
     }
     placements.push({ word, clue, row, col, dir });
   }
