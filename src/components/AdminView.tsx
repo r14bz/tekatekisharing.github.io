@@ -53,6 +53,62 @@ interface AdminViewProps {
 
 type AdminTab = 'overview' | 'users' | 'puzzles' | 'comments' | 'leaderboards' | 'announcement' | 'ai-generator';
 
+/**
+ * Preview grid read-only untuk draft hasil generate AI di Admin Panel.
+ * Sengaja dibuat ringan (bukan pakai CrosswordGrid.tsx yang penuh logika
+ * input/interaksi pemain) — di sini cuma untuk verifikasi visual sebelum
+ * admin publish, bukan untuk dimainkan.
+ */
+const AiDraftGridPreview: React.FC<{ puzzle: CrosswordPuzzle }> = ({ puzzle }) => {
+  const grid = puzzle.grid || [];
+  const height = grid.length;
+  const width = grid[0]?.length || 0;
+  if (height === 0 || width === 0) {
+    return <div className="text-xs text-slate-400 py-4">Grid kosong / tidak valid.</div>;
+  }
+
+  const numberMap = new Map<string, number>();
+  (puzzle.clues || []).forEach((c: any) => {
+    numberMap.set(`${c.row},${c.col}`, c.number);
+  });
+
+  const cellSize = width > 12 ? 22 : width > 9 ? 26 : 30;
+
+  return (
+    <div
+      className="inline-grid border border-slate-300 dark:border-slate-600 bg-slate-300 dark:bg-slate-600"
+      style={{
+        gridTemplateColumns: `repeat(${width}, ${cellSize}px)`,
+        gridTemplateRows: `repeat(${height}, ${cellSize}px)`,
+        gap: '1px',
+      }}
+    >
+      {grid.map((row, r) =>
+        row.map((cell, c) => {
+          const num = numberMap.get(`${r},${c}`);
+          if (cell === null) {
+            return <div key={`${r}-${c}`} className="bg-slate-700 dark:bg-slate-950" />;
+          }
+          return (
+            <div
+              key={`${r}-${c}`}
+              className="relative bg-white dark:bg-slate-900 flex items-center justify-center"
+              style={{ fontSize: cellSize > 24 ? 12 : 10 }}
+            >
+              {num !== undefined && (
+                <span className="absolute top-[1px] left-[2px] text-[7px] leading-none font-bold text-slate-400 dark:text-slate-500">
+                  {num}
+                </span>
+              )}
+              <span className="font-black text-slate-700 dark:text-slate-200">{cell}</span>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+};
+
 export const AdminView: React.FC<AdminViewProps> = ({ onBackToApp, onPlayPuzzle }) => {
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState<boolean>(() => AdminService.isLoggedIn());
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
@@ -1902,6 +1958,15 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBackToApp, onPlayPuzzle 
                   onChange={(e) => setAiDraftAuthorInput(e.target.value)}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-semibold"
                 />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-2">
+                  Preview Grid ({editingAiDraft.width}x{editingAiDraft.height})
+                </label>
+                <div className="flex justify-center p-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl overflow-x-auto">
+                  <AiDraftGridPreview puzzle={editingAiDraft} />
+                </div>
               </div>
 
               <div>
