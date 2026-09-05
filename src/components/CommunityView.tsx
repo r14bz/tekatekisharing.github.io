@@ -329,8 +329,8 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
     });
   }, [activeTab, communityPuzzles, myPuzzles, draftPuzzles, searchQuery]);
 
-  // Pagination: max 5 TTS per halaman
-  const PAGE_SIZE = 5;
+  // Pagination: max 8 TTS per halaman
+  const PAGE_SIZE = 8;
   const [listPage, setListPage] = useState(1);
 
   useEffect(() => {
@@ -1014,7 +1014,7 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
         </div>
       )}
 
-      {/* Pagination — max 5 TTS per halaman */}
+      {/* Pagination — max 8 TTS per halaman */}
       {filteredList.length > PAGE_SIZE && (
         <div
           id="community-pagination"
